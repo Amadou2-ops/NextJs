@@ -30,26 +30,26 @@ BEGIN
     -- Devis incohérent (montant reçu gonflé de 1 XOF) : refusé.
     PERFORM pg_temp.assert_error(format(
         $q$INSERT INTO fx.quotes (user_id, source_country, destination_country, source_currency, destination_currency,
-                payout_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate, customer_rate,
+                payout_method, funding_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate, customer_rate,
                 margin_bps, usd_equivalent, expires_at)
-           VALUES (%L, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 10000, 299, 10299, 64612, %s, %s, 150, 10800,
+           VALUES (%L, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 'wallet_balance', 10000, 299, 10299, 64612, %s, %s, 150, 10800,
                    now() + interval '10 minutes')$q$, v_alice, v_mid, v_customer_rate),
         'LG007', 'devis avec montant reçu incohérent refusé');
 
     -- Devis dont le taux client ne découle pas de la marge : refusé.
     PERFORM pg_temp.assert_error(format(
         $q$INSERT INTO fx.quotes (user_id, source_country, destination_country, source_currency, destination_currency,
-                payout_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate, customer_rate,
+                payout_method, funding_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate, customer_rate,
                 margin_bps, usd_equivalent, expires_at)
-           VALUES (%L, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 10000, 299, 10299, 65000, %s, 650, 150, 10800,
+           VALUES (%L, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 'wallet_balance', 10000, 299, 10299, 65000, %s, 650, 150, 10800,
                    now() + interval '10 minutes')$q$, v_alice, v_mid),
         'LG007', 'taux client incohérent avec la marge refusé');
 
     -- Devis cohérent.
     INSERT INTO fx.quotes (user_id, source_country, destination_country, source_currency, destination_currency,
-                           payout_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate,
+                           payout_method, funding_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate,
                            customer_rate, margin_bps, usd_equivalent, expires_at)
-    VALUES (v_alice, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 10000, 299, 10299, 64611, v_mid,
+    VALUES (v_alice, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 'wallet_balance', 10000, 299, 10299, 64611, v_mid,
             v_customer_rate, 150, 10800, now() + interval '10 minutes')
     RETURNING id INTO v_quote;
 
@@ -106,9 +106,9 @@ BEGIN
 
     -- Devis expiré : refusé à la création du transfert.
     INSERT INTO fx.quotes (user_id, source_country, destination_country, source_currency, destination_currency,
-                           payout_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate,
+                           payout_method, funding_method, source_amount, fee_amount, total_debit, destination_amount, mid_rate,
                            customer_rate, margin_bps, usd_equivalent, created_at, expires_at)
-    VALUES (v_alice, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 10000, 299, 10299, 64611, v_mid,
+    VALUES (v_alice, 'FR', 'SN', 'EUR', 'XOF', 'mobile_money', 'wallet_balance', 10000, 299, 10299, 64611, v_mid,
             v_customer_rate, 150, 10800, now() - interval '20 minutes', now() - interval '10 minutes')
     RETURNING id INTO v_quote2;
     PERFORM pg_temp.assert_error(format(

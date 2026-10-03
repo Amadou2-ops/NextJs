@@ -30,6 +30,7 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     WEBAUTHN_ORIGINS: "https://app.transfertplus.com",
     TSA_URL: "https://tsa.example.com/rfc3161",
     TSA_TRUSTED_CERTS_PATH: "/etc/hosts",
+    OPEN_EXCHANGE_RATES_APP_ID: "a".repeat(32),
     ...overrides,
   };
 }
@@ -55,6 +56,7 @@ describe("configuration", () => {
     ["App Attest de développement", { APPLE_APP_ATTEST_APP_IDS: "ABCDE12345.com.transfertplus.app", APPLE_APP_ATTEST_ALLOW_DEVELOPMENT: "true" }],
     ["origine WebAuthn en http", { WEBAUTHN_ORIGINS: "http://app.transfertplus.com" }],
     ["registre sans ancrage externe", { TSA_URL: "", TSA_TRUSTED_CERTS_PATH: "" }],
+    ["aucun fournisseur de taux", { OPEN_EXCHANGE_RATES_APP_ID: "" }],
   ])("refuse en production : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });
@@ -73,6 +75,9 @@ describe("configuration", () => {
     ["origine WebAuthn hors domaine", { WEBAUTHN_ORIGINS: "https://evil.example" }],
     ["Play Integrity incomplet", { ANDROID_PACKAGE_NAME: "com.transfertplus.app" }],
     ["TSA sans certificats", { TSA_TRUSTED_CERTS_PATH: "" }],
+    ["identifiant Open Exchange Rates invalide", { OPEN_EXCHANGE_RATES_APP_ID: "not-an-app-id" }],
+    ["fournisseur principal non configuré", { FX_PRIMARY_PROVIDER: "fixer" }],
+    ["clé Fixer invalide", { FIXER_API_KEY: "short" }],
   ])("refuse dans tous les environnements : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });

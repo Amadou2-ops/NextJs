@@ -3,6 +3,7 @@ import { PostgresPermissionChecker } from "../../src/auth/permissions.js";
 import { PostgresSessionValidator } from "../../src/auth/sessions.js";
 import { createMemoryRateLimiter } from "../../src/middlewares/rateLimit.js";
 import { createAuthModule } from "../../src/modules/auth/index.js";
+import { createFxModule } from "../../src/modules/fx/index.js";
 import { createLedgerModule } from "../../src/modules/ledger/index.js";
 import { buildTestConfig, createApiPool, createTestKeys, silentLogger } from "./fixtures.js";
 
@@ -31,7 +32,14 @@ export async function routesForContract(): Promise<readonly { readonly method: s
       permissions: new PostgresPermissionChecker(pool),
       deviceBinding: module.deviceBinding,
     });
-    const stack = [module.router, ledgerModule.router].flatMap((router) => (router as unknown as { readonly stack: readonly RouteLayer[] }).stack);
+    const fxModule = createFxModule({
+      config,
+      pool,
+      verifier: new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks),
+      sessions: new PostgresSessionValidator(pool),
+      limiters: { estimateByIp: limiter, quotesBySubject: limiter },
+    });
+    const stack = [module.router, ledgerModule.router, fxModule.router].flatMap((router) => (router as unknown as { readonly stack: readonly RouteLayer[] }).stack);
     return stack.flatMap((layer) =>
       layer.route === undefined
         ? []

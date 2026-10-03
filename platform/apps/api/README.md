@@ -96,6 +96,31 @@ l'API d'administration (phase 9).
   Chaque tâche est protégée par un verrou consultatif PostgreSQL : plusieurs
   instances du worker peuvent tourner sans exécution concurrente.
 
+## Change (`src/modules/fx`)
+
+- **Collecte des taux** (tâche `fx-refresh` du worker, toutes les 15 min) :
+  Open Exchange Rates (`Authorization: Token …`) et Fixer via APILayer
+  (en-tête `apikey`), base USD. Le JSON est lu avec le texte exact de chaque
+  nombre (jamais de flottant) puis normalisé à 15 décimales. Un taux variant
+  de plus de `FX_MAX_JUMP_BPS` par rapport au dernier taux connu (< 24 h) est
+  écarté et signalé (outbox `fx.rate_rejected`). Chaque collecte est tracée
+  dans `fx.rate_fetches` (immuable).
+- **Moteur de devis** (`QuoteService`) : pays d'envoi/réception ouverts,
+  devises actives, corridor de paiement disponible, taux du fournisseur
+  principal de moins de `FX_MAX_RATE_AGE_MINUTES`, écart avec le second
+  fournisseur inférieur à `FX_MAX_DIVERGENCE_BPS` (sinon 503 : aucun taux
+  douteux n'est proposé). Taux croisé via USD, marge selon `fx.pricing_rules`,
+  frais selon `transfers.fee_schedules` (fixe + pourcentage arrondi au
+  supérieur, plancher/plafond, propre au mode de financement), mode « envoi »
+  ou « réception » (plus petit montant source garantissant le montant reçu).
+- Les calculs (taux client, conversion arrondie vers le bas) sont identiques
+  au centime près à ceux de la base : `fx.quotes_validate` refuse tout devis
+  incohérent et `transfers_guard` impose au transfert de reprendre le devis à
+  l'identique, mode de financement compris.
+- Routes : `GET /v1/fx/estimate` (public, limité par IP),
+  `POST /v1/quotes` (client actif, devis valable `FX_QUOTE_TTL_SECONDS`),
+  `GET /v1/quotes/{id}`.
+
 ## Commandes
 
 ```bash

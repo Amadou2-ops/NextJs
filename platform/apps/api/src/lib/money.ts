@@ -222,3 +222,68 @@ export function formatMoney(money: Money, minorUnits: number, locale: string): s
     minorUnits === 0 ? integerPart.toString() : `${integerPart.toString()}.${fractionPart.toString().padStart(minorUnits, "0")}`;
   return formatter.format(decimalString as Intl.StringNumericLiteral);
 }
+
+/**
+ * Normalise un littéral numérique JSON (texte source exact, notation
+ * scientifique admise) en décimal positif d'au plus `maxScale` décimales,
+ * arrondi au plus proche (moitié vers le haut). Refuse zéro, les négatifs et
+ * les valeurs hors de numeric(30, 15).
+ *   "655.957" → "655.957" ; "1.23E-7" → "0.000000123" ; "1e3" → "1000"
+ */
+export function normalizeDecimalLiteral(source: string, maxScale = 15): string {
+  const match = /^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d{1,3}))?$/.exec(source.trim());
+  if (match === null) throw new MoneyError(`littéral décimal invalide : ${source}`);
+  const [, integerDigits = "0", fractionDigits = "", exponentText] = match;
+  const exponent = exponentText === undefined ? 0 : Number(exponentText);
+  // valeur = coefficient × 10^(exponent − scale)
+  let coefficient = BigInt(integerDigits + fractionDigits);
+  let scale = fractionDigits.length - exponent;
+  if (scale < 0) {
+    coefficient *= 10n ** BigInt(-scale);
+    scale = 0;
+  }
+  if (scale > maxScale) {
+    const divisor = 10n ** BigInt(scale - maxScale);
+    const quotient = coefficient / divisor;
+    coefficient = (coefficient % divisor) * 2n >= divisor ? quotient + 1n : quotient;
+    scale = maxScale;
+  }
+  if (coefficient === 0n) throw new MoneyError(`taux nul ou trop petit : ${source}`);
+  const formatted = formatDecimal({ coefficient, scale });
+  // Contrôle de domaine (≤ 15 chiffres entiers) par l'analyseur strict.
+  parseDecimal(formatted);
+  return formatted;
+}
+
+/** Écart relatif |a − b| / b en points de base (arrondi supérieur). */
+export function relativeDifferenceBps(a: string, b: string): number {
+  const left = parseDecimal(a);
+  const right = parseDecimal(b);
+  if (right.coefficient === 0n) throw new MoneyError("référence nulle");
+  const scale = Math.max(left.scale, right.scale);
+  const leftScaled = left.coefficient * 10n ** BigInt(scale - left.scale);
+  const rightScaled = right.coefficient * 10n ** BigInt(scale - right.scale);
+  const difference = leftScaled > rightScaled ? leftScaled - rightScaled : rightScaled - leftScaled;
+  const numerator = difference * 10_000n;
+  const bps = numerator / rightScaled + (numerator % rightScaled === 0n ? 0n : 1n);
+  return bps > 1_000_000n ? 1_000_000 : Number(bps);
+}
+
+/**
+ * Montant source minimal (unités mineures) tel que convertMinor(source) ≥
+ * cible : sert au mode « montant reçu » (le bénéficiaire reçoit au moins le
+ * montant demandé).
+ */
+export function minimalSourceForTarget(targetMinor: bigint, rate: string, sourceMinorUnits: number, targetMinorUnits: number): bigint {
+  if (targetMinor <= 0n) throw new MoneyError("montant cible invalide");
+  const decimal = parseDecimal(rate);
+  if (decimal.coefficient === 0n) throw new MoneyError("taux nul");
+  // source ≥ cible × 10^(su − tu) / taux = cible × 10^scale × 10^(su − tu) / coefficient
+  const shift = sourceMinorUnits - targetMinorUnits;
+  const numerator = targetMinor * pow10(decimal.scale) * pow10(Math.max(0, shift));
+  const denominator = decimal.coefficient * pow10(Math.max(0, -shift));
+  let source = numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
+  while (convertMinor(source, rate, sourceMinorUnits, targetMinorUnits) < targetMinor) source += 1n;
+  while (source > 1n && convertMinor(source - 1n, rate, sourceMinorUnits, targetMinorUnits) >= targetMinor) source -= 1n;
+  return source;
+}

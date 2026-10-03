@@ -184,6 +184,18 @@ const rawEnvironmentSchema = z.object({
   TSA_TRUSTED_CERTS_PATH: z.string().min(1).optional(),
   TSA_ANCHOR_TARGET: z.string().regex(/^[a-z0-9_-]{2,50}$/).default("rfc3161-tsa"),
 
+  // Taux de change : Open Exchange Rates (base USD) et Fixer via APILayer
+  // (base USD, offre payante). Au moins un fournisseur en production ; les
+  // deux recommandés (contrôle de divergence et bascule).
+  OPEN_EXCHANGE_RATES_APP_ID: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  FIXER_API_KEY: z.string().regex(/^[A-Za-z0-9]{32}$/).optional(),
+  FX_PRIMARY_PROVIDER: z.enum(["open_exchange_rates", "fixer"]).default("open_exchange_rates"),
+  FX_MAX_RATE_AGE_MINUTES: z.coerce.number().int().min(5).max(1440).default(120),
+  FX_MAX_DIVERGENCE_BPS: z.coerce.number().int().min(10).max(2000).default(200),
+  FX_MAX_JUMP_BPS: z.coerce.number().int().min(50).max(5000).default(1000),
+  FX_REFRESH_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+  FX_QUOTE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
+
   // Périodicité des tâches de fond (worker).
   RECONCILIATION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   ANCHOR_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
@@ -244,6 +256,16 @@ export interface AppConfig {
         }
       | undefined;
     readonly passwordBreachCheck: boolean;
+  };
+  readonly fx: {
+    readonly openExchangeRatesAppId: string | undefined;
+    readonly fixerApiKey: string | undefined;
+    readonly primaryProvider: "open_exchange_rates" | "fixer";
+    readonly maxRateAgeMs: number;
+    readonly maxDivergenceBps: number;
+    readonly maxJumpBps: number;
+    readonly refreshIntervalMs: number;
+    readonly quoteTtlSeconds: number;
   };
   readonly ledger: {
     readonly timestampAuthority: { readonly url: string; readonly trustedCertsPem: string; readonly target: string } | undefined;
@@ -307,6 +329,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   if (raw.APP_ENV === "production" && raw.TSA_URL === undefined) {
     problems.push("la production exige un ancrage externe du registre (TSA_URL, TSA_TRUSTED_CERTS_PATH)");
+  }
+
+  if (raw.APP_ENV === "production" && raw.OPEN_EXCHANGE_RATES_APP_ID === undefined && raw.FIXER_API_KEY === undefined) {
+    problems.push("la production exige au moins un fournisseur de taux (OPEN_EXCHANGE_RATES_APP_ID ou FIXER_API_KEY)");
+  }
+  const primaryConfigured = raw.FX_PRIMARY_PROVIDER === "open_exchange_rates" ? raw.OPEN_EXCHANGE_RATES_APP_ID : raw.FIXER_API_KEY;
+  if (primaryConfigured === undefined && (raw.OPEN_EXCHANGE_RATES_APP_ID !== undefined || raw.FIXER_API_KEY !== undefined)) {
+    problems.push(`FX_PRIMARY_PROVIDER=${raw.FX_PRIMARY_PROVIDER} n'est pas configuré`);
   }
 
   const signingKey = raw.JWT_CUSTOMER_SIGNING_KEY;
@@ -401,6 +431,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
               serviceAccount: raw.GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT,
             },
       passwordBreachCheck: raw.PASSWORD_BREACH_CHECK === "enabled",
+    },
+    fx: {
+      openExchangeRatesAppId: raw.OPEN_EXCHANGE_RATES_APP_ID,
+      fixerApiKey: raw.FIXER_API_KEY,
+      primaryProvider: raw.FX_PRIMARY_PROVIDER,
+      maxRateAgeMs: raw.FX_MAX_RATE_AGE_MINUTES * 60_000,
+      maxDivergenceBps: raw.FX_MAX_DIVERGENCE_BPS,
+      maxJumpBps: raw.FX_MAX_JUMP_BPS,
+      refreshIntervalMs: raw.FX_REFRESH_INTERVAL_MINUTES * 60_000,
+      quoteTtlSeconds: raw.FX_QUOTE_TTL_SECONDS,
     },
     ledger: {
       timestampAuthority:

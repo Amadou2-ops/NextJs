@@ -119,9 +119,11 @@ describe("parité des calculs monétaires API ↔ base", () => {
     ["1.084729", 75],
     ["0.000123456789", 1500],
     ["151.123456789012345", 33],
-  ] as const)("applyMarginToRate(%s, %i) = round(mid × (10000 − marge) / 10000, 15)", async (mid, margin) => {
+    // Cas où une division numeric PostgreSQL arrondirait deux fois (…478,475).
+    ["655.956521739130435", 150],
+  ] as const)("applyMarginToRate(%s, %i) = round(mid × (10000 − marge) × 0,0001, 15) de fx.quotes_validate", async (mid, margin) => {
     const sql = await owner.query<{ value: string }>(
-      "SELECT trim(trailing '.' FROM trim(trailing '0' FROM round($1::numeric * (10000 - $2)::numeric / 10000, 15)::text)) AS value",
+      "SELECT trim(trailing '.' FROM trim(trailing '0' FROM round($1::numeric * (10000 - $2)::numeric * 0.0001, 15)::text)) AS value",
       [mid, margin],
     );
     expect(applyMarginToRate(mid, margin)).toBe(sql.rows[0]?.value);

@@ -16,7 +16,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 2 | Cœur de l'API (config, erreurs, middlewares de sécurité) | ✅ |
 | 3 | Authentification client (JWT EdDSA, sessions, appareils attestés, MFA, passkeys) | ✅ |
 | 4 | Registre côté API : portefeuilles, relevés, rapprochement, ancrage RFC 3161 | ✅ |
-| 5 | Taux de change (Fixer, Open Exchange Rates), devis | à venir |
+| 5 | Taux de change (Fixer, Open Exchange Rates), simulation et devis garantis | ✅ |
 | 6 | KYC (Smile ID, Onfido) et webhooks signés | à venir |
 | 7 | Routage des paiements (Stripe Connect, Flutterwave, Thunes) | à venir |
 | 8 | AML : règles, criblage, dossiers | à venir |
@@ -48,7 +48,7 @@ pnpm db:verify                  # chaîne d'empreintes, soldes, balance généra
 ```
 platform/
   db/                      @transfertplus/db — schéma, migrateur, tests
-    migrations/            0001…0016, SQL versionné et immuable une fois appliqué
+    migrations/            0001…0019, SQL versionné et immuable une fois appliqué
     seed/                  données de référence (générées, idempotentes)
     scripts/               générateur des données de référence
     src/                   CLI : migrate | status | verify | seed | test

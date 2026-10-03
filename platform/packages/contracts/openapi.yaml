@@ -32,6 +32,8 @@ tags:
     description: Portefeuilles et relevés du client
   - name: admin-ledger
     description: Consultation du registre par le personnel habilité
+  - name: fx
+    description: Simulation de transfert et devis garantis (taux, frais, montant reçu)
 paths:
   /health:
     get:
@@ -563,6 +565,81 @@ paths:
         - adminSession: []
       responses:
         "200": { description: État d'intégrité, content: { application/json: { schema: { type: object } } } }
+  /fx/estimate:
+    get:
+      tags: [fx]
+      operationId: estimateTransfer
+      summary: Simulation publique d'un transfert (calculateur du site web)
+      description: |
+        Non authentifiée, limitée par adresse IP. Le résultat n'engage pas :
+        seul un devis (`POST /quotes`) fige le taux et les frais.
+      security: []
+      parameters:
+        - { name: sourceCountry, in: query, required: true, schema: { $ref: "#/components/schemas/CountryCode" } }
+        - { name: destinationCountry, in: query, required: true, schema: { $ref: "#/components/schemas/CountryCode" } }
+        - { name: sourceCurrency, in: query, required: true, schema: { $ref: "#/components/schemas/CurrencyCode" } }
+        - { name: destinationCurrency, in: query, required: true, schema: { $ref: "#/components/schemas/CurrencyCode" } }
+        - { name: payoutMethod, in: query, required: true, schema: { $ref: "#/components/schemas/PayoutMethod" } }
+        - { name: fundingMethod, in: query, required: false, schema: { $ref: "#/components/schemas/FundingMethod" } }
+        - { name: amount, in: query, required: true, schema: { $ref: "#/components/schemas/PositiveMinorUnits" } }
+        - { name: amountType, in: query, required: false, schema: { $ref: "#/components/schemas/AmountType" } }
+      responses:
+        "200":
+          description: Simulation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /quotes:
+    post:
+      tags: [fx]
+      operationId: createQuote
+      summary: Devis garanti pour le client connecté
+      description: |
+        Le pays d'envoi est le pays de résidence du client. Le devis fige le
+        taux, la marge, les frais et le mode de financement ; il est valable
+        `expiresAt` et ne peut être consommé que par un seul transfert.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuoteRequest" }
+      responses:
+        "201":
+          description: Devis enregistré
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /quotes/{quoteId}:
+    get:
+      tags: [fx]
+      operationId: getQuote
+      summary: Consultation d'un devis du client
+      parameters:
+        - { name: quoteId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Devis
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Quote"
+                  - type: object
+                    required: [consumed]
+                    properties:
+                      consumed: { type: boolean }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     mobileBearer:
@@ -821,6 +898,58 @@ components:
         createdAt: { type: string, format: date-time }
         lastSeenAt: { type: [string, "null"], format: date-time }
         current: { type: boolean }
+    PayoutMethod:
+      type: string
+      enum: [bank_account, mobile_money, cash_pickup, card, wallet]
+    FundingMethod:
+      type: string
+      enum: [wallet_balance, card, bank_transfer, mobile_money, apple_pay, google_pay]
+      default: card
+    AmountType:
+      type: string
+      description: "`send` : montant converti saisi côté envoi ; `receive` : montant à recevoir par le bénéficiaire."
+      enum: [send, receive]
+      default: send
+    PositiveMinorUnits:
+      type: string
+      pattern: "^[1-9][0-9]{0,14}$"
+    ExchangeRate:
+      type: string
+      description: Taux décimal exact (15 décimales au plus), jamais un nombre flottant.
+      pattern: "^[0-9]+(\\.[0-9]{1,15})?$"
+    QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [destinationCountry, sourceCurrency, destinationCurrency, payoutMethod, amount]
+      properties:
+        destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+        sourceCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+        destinationCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+        amount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+        amountType: { $ref: "#/components/schemas/AmountType" }
+    Quote:
+      type: object
+      required: [quoteId, sourceCountry, destinationCountry, payoutMethod, fundingMethod, sendAmount, fee, totalToPay,
+                 receiveAmount, exchangeRate, estimatedDeliveryMinutes, rateTimestamp, expiresAt]
+      properties:
+        quoteId: { type: [string, "null"], format: uuid, description: "null pour une simulation" }
+        sourceCountry: { $ref: "#/components/schemas/CountryCode" }
+        destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+        sendAmount: { $ref: "#/components/schemas/Money" }
+        fee: { $ref: "#/components/schemas/Money" }
+        totalToPay: { $ref: "#/components/schemas/Money" }
+        receiveAmount: { $ref: "#/components/schemas/Money" }
+        exchangeRate: { $ref: "#/components/schemas/ExchangeRate" }
+        estimatedDeliveryMinutes:
+          type: [integer, "null"]
+          minimum: 0
+          description: Corridor le plus rapide ; null si plus aucun corridor ne sert ce devis.
+        rateTimestamp: { type: [string, "null"], format: date-time, description: "Horodatage du plus ancien taux utilisé" }
+        expiresAt: { type: [string, "null"], format: date-time, description: "null pour une simulation" }
     Wallet:
       type: object
       required: [currency, minorUnits, available, held]

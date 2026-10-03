@@ -4,11 +4,13 @@ import { ConfigurationError, loadConfig } from "./config/env.js";
 import { createLogger } from "./config/logger.js";
 import { checkDatabase, createDatabasePool } from "./db/pool.js";
 import { ChainAnchorJob } from "./jobs/anchor.job.js";
+import { FxRefreshJob } from "./jobs/fxRefresh.job.js";
 import { MaintenanceJob } from "./jobs/maintenance.job.js";
 import { ReconciliationJob } from "./jobs/reconciliation.job.js";
 import { JobScheduler } from "./jobs/scheduler.js";
 import type { Job } from "./jobs/scheduler.js";
 import { parsePemBundle, TimestampAuthorityClient } from "./lib/crypto/rfc3161.js";
+import { configuredRateProviders, createRateIngestion } from "./modules/fx/index.js";
 
 /**
  * Processus de tâches de fond (séparé de l'API HTTP) : rapprochement
@@ -38,6 +40,12 @@ async function main(): Promise<void> {
     new ReconciliationJob(pool, logger, workerId, config.ledger.reconciliationIntervalMs),
     new MaintenanceJob(pool, logger, MAINTENANCE_INTERVAL_MS),
   ];
+  const rateProviders = configuredRateProviders(config);
+  if (rateProviders.length === 0) {
+    logger.warn("aucun fournisseur de taux configuré : les devis seront indisponibles");
+  } else {
+    jobs.push(new FxRefreshJob(createRateIngestion(config, pool, logger), rateProviders, logger, config.fx.refreshIntervalMs));
+  }
   const tsa = config.ledger.timestampAuthority;
   if (tsa === undefined) {
     logger.warn("ancrage externe du registre désactivé (TSA_URL non configurée)");

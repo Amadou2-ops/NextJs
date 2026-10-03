@@ -10,6 +10,7 @@ import { checkDatabase, createDatabasePool } from "./db/pool.js";
 import { createRedisRateLimiter } from "./middlewares/rateLimit.js";
 import { checkRedis, createRedisClient } from "./lib/redis.js";
 import { createAuthModule } from "./modules/auth/index.js";
+import { createFxModule } from "./modules/fx/index.js";
 import { createLedgerModule } from "./modules/ledger/index.js";
 
 /**
@@ -24,6 +25,10 @@ const SHUTDOWN_TIMEOUT_MS = 25_000;
 const GLOBAL_RATE_LIMIT = { keyPrefix: "global-ip", points: 300, durationSeconds: 60, blockDurationSeconds: 60 } as const;
 /** Routes d'authentification publiques : 60 requêtes / 10 min par IP. */
 const AUTH_PUBLIC_RATE_LIMIT = { keyPrefix: "auth-ip", points: 60, durationSeconds: 600, blockDurationSeconds: 600 } as const;
+/** Simulateur public de prix : 120 requêtes / 10 min par IP. */
+const FX_ESTIMATE_RATE_LIMIT = { keyPrefix: "fx-estimate-ip", points: 120, durationSeconds: 600, blockDurationSeconds: 300 } as const;
+/** Devis garantis : 60 / 10 min par client. */
+const FX_QUOTE_RATE_LIMIT = { keyPrefix: "fx-quote-subject", points: 60, durationSeconds: 600, blockDurationSeconds: 300 } as const;
 /** Inscription / connexion : 10 tentatives / 15 min par numéro de téléphone. */
 const AUTH_PHONE_RATE_LIMIT = { keyPrefix: "auth-phone", points: 10, durationSeconds: 900, blockDurationSeconds: 900 } as const;
 
@@ -57,12 +62,24 @@ async function main(): Promise<void> {
     },
   });
 
+  const verifier = new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks);
   const ledgerModule = createLedgerModule({
     pool,
-    verifier: new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks),
+    verifier,
     sessions,
     permissions: new PostgresPermissionChecker(pool),
     deviceBinding: authModule.deviceBinding,
+  });
+
+  const fxModule = createFxModule({
+    config,
+    pool,
+    verifier,
+    sessions,
+    limiters: {
+      estimateByIp: createRedisRateLimiter(redis, FX_ESTIMATE_RATE_LIMIT),
+      quotesBySubject: createRedisRateLimiter(redis, FX_QUOTE_RATE_LIMIT),
+    },
   });
 
   const app = createApp({
@@ -76,6 +93,7 @@ async function main(): Promise<void> {
     mountRoutes: (application) => {
       application.use(authModule.router);
       application.use(ledgerModule.router);
+      application.use(fxModule.router);
     },
   });
 
