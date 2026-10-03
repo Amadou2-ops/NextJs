@@ -145,7 +145,12 @@ components:
         - UNAUTHENTICATED
         - FORBIDDEN
         - NOT_FOUND
+        - CONFLICT
+        - REQUEST_IN_PROGRESS
+        - PAYLOAD_TOO_LARGE
+        - UNSUPPORTED_MEDIA_TYPE
         - RATE_LIMITED
+        - SERVICE_UNAVAILABLE
         - INTERNAL_ERROR
     Problem:
       type: object
@@ -168,6 +173,17 @@ components:
           $ref: "#/components/schemas/ErrorCode"
         requestId:
           type: string
+        issues:
+          type: array
+          description: Détail par champ (erreurs de validation uniquement).
+          items:
+            type: object
+            required: [path, message]
+            properties:
+              path:
+                type: string
+              message:
+                type: string
     Jwks:
       type: object
       required: [keys]

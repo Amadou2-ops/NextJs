@@ -13,7 +13,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 |---|---|---|
 | 0 | Monorepo, configuration, CI, contrat OpenAPI de base | ✅ |
 | 1 | Base de données : 16 migrations, données de référence, tests | ✅ |
-| 2 | Cœur de l'API (config, erreurs, middlewares de sécurité) | à venir |
+| 2 | Cœur de l'API (config, erreurs, middlewares de sécurité) | ✅ |
 | 3 | Authentification (JWT EdDSA, sessions, appareils, MFA) | à venir |
 | 4 | Service du registre côté API, rapprochement, ancrage | à venir |
 | 5 | Taux de change (Fixer, Open Exchange Rates), devis | à venir |
@@ -53,9 +53,11 @@ platform/
     scripts/               générateur des données de référence
     src/                   CLI : migrate | status | verify | seed | test
     tests/                 fixtures, tests SQL, test de concurrence
+  apps/api/                @transfertplus/api — API Express (TypeScript)
   packages/contracts/      contrat OpenAPI unique (types TS + client Dart)
   docker-compose.yml       environnement local
   .env.example             variables (aucune valeur réelle)
 ```
 
-Voir [`db/README.md`](db/README.md) pour la conception du registre.
+Voir [`db/README.md`](db/README.md) pour la conception du registre et
+[`apps/api/README.md`](apps/api/README.md) pour l'architecture de l'API.

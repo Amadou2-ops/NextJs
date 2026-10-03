@@ -27,5 +27,11 @@
     "libphonenumber-js": "^1.12.0",
     "tsx": "^4.20.0",
     "typescript": "~6.0.3"
+  },
+  "exports": {
+    "./migrator": "./src/migrator.ts",
+    "./seeder": "./src/seeder.ts",
+    "./integrity": "./src/integrity.ts",
+    "./package.json": "./package.json"
   }
 }

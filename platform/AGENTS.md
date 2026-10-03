@@ -17,3 +17,18 @@ du dépôt suit le `AGENTS.md` racine).
 - Les données de référence `db/seed/0001` et `0002` sont générées :
   `pnpm --filter @transfertplus/db generate:reference`.
 - Avant de livrer : `pnpm --filter @transfertplus/db typecheck` et `pnpm db:test`.
+
+## API (`apps/api`)
+
+- Architecture en couches : routes → contrôleurs → services → dépôts (SQL). Les
+  contrôleurs ne lisent que `req.validated` (middleware `validate`, schémas Zod
+  stricts), jamais `req.body` brut.
+- Toute écriture passe par `withTransaction(pool, { actor }, …)`. Aucun effet
+  externe (prestataire, e-mail) dans une transaction : utiliser l'outbox.
+- Toute route mutatrice : `authenticate` → `validate` → `requireIdempotency`.
+  Routes du personnel : `authenticate(…, ["admin"])` → `requirePermission`.
+- Erreurs : lever une `AppError` (ou laisser remonter l'erreur PostgreSQL, traduite
+  par `toAppError`). Ajouter un code d'erreur = l'ajouter aussi au contrat OpenAPI
+  (un test vérifie la concordance).
+- Avant de livrer : `pnpm --filter @transfertplus/api typecheck`, `lint`, `test`
+  (`TEST_DATABASE_URL` vers une base `*_test`).
