@@ -76,13 +76,38 @@ WITH inserted AS (
     INSERT INTO identity.users (phone_bidx, phone_enc, phone_country, password_hash, country_of_residence,
                                 pii_key_id, status, phone_verified_at, kyc_tier)
     VALUES (sha256('fixture-alice'), '\x01', 'FR', '$argon2id$v=19$m=65536,t=3,p=4$fixture', 'FR',
-            'kms-key-v1', 'active', now(), 'tier_2'),
+            'kms-key-v1', 'active', now(), 'tier_0'),
            (sha256('fixture-bob'), '\x02', 'GB', '$argon2id$v=19$m=65536,t=3,p=4$fixture', 'GB',
-            'kms-key-v1', 'active', now(), 'tier_1')
+            'kms-key-v1', 'active', now(), 'tier_0')
     RETURNING id, phone_country
 )
 INSERT INTO fx_ids (key, id)
 SELECT CASE phone_country WHEN 'FR' THEN 'alice' ELSE 'bob' END, id FROM inserted;
+
+-- Niveaux KYC : accordés par la base à l'approbation de vérifications
+-- (Alice niveau 2, Bob niveau 1), jamais écrits directement.
+SELECT set_config('app.actor_type', 'provider', true), set_config('app.actor_id', 'fixtures', true);
+CREATE FUNCTION pg_temp.grant_tier(p_user uuid, p_tier kyc.kyc_tier, p_reference text)
+    RETURNS void
+    LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_id uuid;
+BEGIN
+    INSERT INTO kyc.verifications (user_id, provider, job_type, tier_requested, provider_reference)
+    VALUES (p_user, 'onfido', 'document_verification', p_tier, p_reference)
+    RETURNING id INTO v_id;
+    UPDATE kyc.verifications SET status = 'submitted', submitted_at = now() WHERE id = v_id;
+    INSERT INTO kyc.identity_evidence (verification_id, user_id, provider, pii_key_id, declared_identity_match)
+    VALUES (v_id, p_user, 'onfido', 'kms-key-v1', true);
+    UPDATE kyc.verifications
+       SET status = 'approved', decided_at = now(), expires_at = now() + interval '2 years'
+     WHERE id = v_id;
+END;
+$$;
+SELECT pg_temp.grant_tier(pg_temp.id('alice'), 'tier_2', 'fixture-run-alice');
+SELECT pg_temp.grant_tier(pg_temp.id('bob'), 'tier_1', 'fixture-run-bob');
+SELECT set_config('app.actor_type', '', true), set_config('app.actor_id', '', true);
 
 -- Comptes du registre.
 INSERT INTO fx_ids (key, id) VALUES

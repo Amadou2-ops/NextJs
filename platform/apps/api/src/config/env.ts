@@ -196,6 +196,27 @@ const rawEnvironmentSchema = z.object({
   FX_REFRESH_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
   FX_QUOTE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
 
+  // KYC — Onfido (Studio : un workflow par type de contrôle) et Smile ID.
+  // Au moins un prestataire en production.
+  ONFIDO_API_TOKEN: z.string().regex(/^api_(live|sandbox)[A-Za-z0-9_.-]{16,}$/).optional(),
+  ONFIDO_REGION: z.enum(["eu", "us", "ca"]).default("eu"),
+  ONFIDO_WEBHOOK_TOKEN: z.string().regex(/^[A-Za-z0-9_-]{16,}$/).optional(),
+  ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: z.uuid().optional(),
+  ONFIDO_WORKFLOW_PROOF_OF_ADDRESS: z.uuid().optional(),
+  SMILE_ID_PARTNER_ID: z.string().regex(/^[0-9]{1,12}$/).optional(),
+  SMILE_ID_API_KEY: z.string().regex(/^[A-Za-z0-9_-]{16,}$/).optional(),
+  SMILE_ID_ENVIRONMENT: z.enum(["sandbox", "production"]).default("sandbox"),
+  SMILE_ID_CALLBACK_URL: z.url({ protocol: /^https?$/ }).optional(),
+  // Fenêtre d'acceptation de l'horodatage signé des rappels Smile ID.
+  SMILE_ID_CALLBACK_TOLERANCE_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+  // Validité d'une vérification approuvée avant nouvelle vérification.
+  KYC_VERIFICATION_VALIDITY_DAYS: z.coerce.number().int().min(30).max(1825).default(730),
+  // Délai laissé au client pour terminer la capture dans le SDK.
+  KYC_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  // Tentatives par niveau sur 30 jours glissants (anti-fraude, coût prestataire).
+  KYC_MAX_ATTEMPTS_PER_30_DAYS: z.coerce.number().int().min(1).max(20).default(3),
+  KYC_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),
+
   // Périodicité des tâches de fond (worker).
   RECONCILIATION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   ANCHOR_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
@@ -267,6 +288,30 @@ export interface AppConfig {
     readonly refreshIntervalMs: number;
     readonly quoteTtlSeconds: number;
   };
+  readonly kyc: {
+    readonly onfido:
+      | {
+          readonly apiToken: string;
+          readonly baseUrl: string;
+          readonly webhookToken: string;
+          readonly workflows: { readonly document_verification: string | undefined; readonly proof_of_address: string | undefined };
+        }
+      | undefined;
+    readonly smileId:
+      | {
+          readonly partnerId: string;
+          readonly apiKey: string;
+          readonly environment: "sandbox" | "production";
+          readonly baseUrl: string;
+          readonly callbackUrl: string;
+          readonly callbackToleranceSeconds: number;
+        }
+      | undefined;
+    readonly verificationValidityDays: number;
+    readonly sessionTtlHours: number;
+    readonly maxAttemptsPer30Days: number;
+    readonly syncIntervalMs: number;
+  };
   readonly ledger: {
     readonly timestampAuthority: { readonly url: string; readonly trustedCertsPem: string; readonly target: string } | undefined;
     readonly reconciliationIntervalMs: number;
@@ -337,6 +382,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const primaryConfigured = raw.FX_PRIMARY_PROVIDER === "open_exchange_rates" ? raw.OPEN_EXCHANGE_RATES_APP_ID : raw.FIXER_API_KEY;
   if (primaryConfigured === undefined && (raw.OPEN_EXCHANGE_RATES_APP_ID !== undefined || raw.FIXER_API_KEY !== undefined)) {
     problems.push(`FX_PRIMARY_PROVIDER=${raw.FX_PRIMARY_PROVIDER} n'est pas configuré`);
+  }
+
+  const onfidoValues = [raw.ONFIDO_API_TOKEN, raw.ONFIDO_WEBHOOK_TOKEN];
+  const onfidoConfigured = onfidoValues.every((value) => value !== undefined);
+  if (onfidoValues.some((value) => value !== undefined) && !onfidoConfigured) {
+    problems.push("Onfido exige ensemble ONFIDO_API_TOKEN et ONFIDO_WEBHOOK_TOKEN");
+  }
+  if (onfidoConfigured && raw.ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION === undefined && raw.ONFIDO_WORKFLOW_PROOF_OF_ADDRESS === undefined) {
+    problems.push("Onfido exige au moins un workflow (ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION, ONFIDO_WORKFLOW_PROOF_OF_ADDRESS)");
+  }
+  const smileValues = [raw.SMILE_ID_PARTNER_ID, raw.SMILE_ID_API_KEY, raw.SMILE_ID_CALLBACK_URL];
+  const smileConfigured = smileValues.every((value) => value !== undefined);
+  if (smileValues.some((value) => value !== undefined) && !smileConfigured) {
+    problems.push("Smile ID exige ensemble SMILE_ID_PARTNER_ID, SMILE_ID_API_KEY et SMILE_ID_CALLBACK_URL");
+  }
+  if (strict) {
+    if (raw.SMILE_ID_CALLBACK_URL !== undefined && !raw.SMILE_ID_CALLBACK_URL.startsWith("https:")) {
+      problems.push("SMILE_ID_CALLBACK_URL doit être en https hors développement");
+    }
+  }
+  if (raw.APP_ENV === "production") {
+    if (!onfidoConfigured && !smileConfigured) {
+      problems.push("la production exige au moins un prestataire KYC (Onfido ou Smile ID)");
+    }
+    if (raw.ONFIDO_API_TOKEN !== undefined && !raw.ONFIDO_API_TOKEN.startsWith("api_live")) {
+      problems.push("la production exige un jeton Onfido de production (api_live…)");
+    }
+    if (smileConfigured && raw.SMILE_ID_ENVIRONMENT !== "production") {
+      problems.push("la production exige SMILE_ID_ENVIRONMENT=production");
+    }
   }
 
   const signingKey = raw.JWT_CUSTOMER_SIGNING_KEY;
@@ -441,6 +516,35 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       maxJumpBps: raw.FX_MAX_JUMP_BPS,
       refreshIntervalMs: raw.FX_REFRESH_INTERVAL_MINUTES * 60_000,
       quoteTtlSeconds: raw.FX_QUOTE_TTL_SECONDS,
+    },
+    kyc: {
+      onfido:
+        raw.ONFIDO_API_TOKEN === undefined || raw.ONFIDO_WEBHOOK_TOKEN === undefined
+          ? undefined
+          : {
+              apiToken: raw.ONFIDO_API_TOKEN,
+              baseUrl: `https://api.${raw.ONFIDO_REGION}.onfido.com/v3.6`,
+              webhookToken: raw.ONFIDO_WEBHOOK_TOKEN,
+              workflows: {
+                document_verification: raw.ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION,
+                proof_of_address: raw.ONFIDO_WORKFLOW_PROOF_OF_ADDRESS,
+              },
+            },
+      smileId:
+        raw.SMILE_ID_PARTNER_ID === undefined || raw.SMILE_ID_API_KEY === undefined || raw.SMILE_ID_CALLBACK_URL === undefined
+          ? undefined
+          : {
+              partnerId: raw.SMILE_ID_PARTNER_ID,
+              apiKey: raw.SMILE_ID_API_KEY,
+              environment: raw.SMILE_ID_ENVIRONMENT,
+              baseUrl: raw.SMILE_ID_ENVIRONMENT === "production" ? "https://api.smileidentity.com/v1" : "https://testapi.smileidentity.com/v1",
+              callbackUrl: raw.SMILE_ID_CALLBACK_URL,
+              callbackToleranceSeconds: raw.SMILE_ID_CALLBACK_TOLERANCE_SECONDS,
+            },
+      verificationValidityDays: raw.KYC_VERIFICATION_VALIDITY_DAYS,
+      sessionTtlHours: raw.KYC_SESSION_TTL_HOURS,
+      maxAttemptsPer30Days: raw.KYC_MAX_ATTEMPTS_PER_30_DAYS,
+      syncIntervalMs: raw.KYC_SYNC_INTERVAL_MINUTES * 60_000,
     },
     ledger: {
       timestampAuthority:

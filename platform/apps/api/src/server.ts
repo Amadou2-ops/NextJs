@@ -11,7 +11,9 @@ import { createRedisRateLimiter } from "./middlewares/rateLimit.js";
 import { checkRedis, createRedisClient } from "./lib/redis.js";
 import { createAuthModule } from "./modules/auth/index.js";
 import { createFxModule } from "./modules/fx/index.js";
+import { createKycModule } from "./modules/kyc/index.js";
 import { createLedgerModule } from "./modules/ledger/index.js";
+import { WebhookInbox } from "./modules/webhooks/webhookInbox.js";
 
 /**
  * Point d'entrée du processus : construit les ressources, démarre le serveur
@@ -29,6 +31,8 @@ const AUTH_PUBLIC_RATE_LIMIT = { keyPrefix: "auth-ip", points: 60, durationSecon
 const FX_ESTIMATE_RATE_LIMIT = { keyPrefix: "fx-estimate-ip", points: 120, durationSeconds: 600, blockDurationSeconds: 300 } as const;
 /** Devis garantis : 60 / 10 min par client. */
 const FX_QUOTE_RATE_LIMIT = { keyPrefix: "fx-quote-subject", points: 60, durationSeconds: 600, blockDurationSeconds: 300 } as const;
+/** Ouverture de sessions KYC : 10 / heure par client (coût prestataire, anti-abus). */
+const KYC_START_RATE_LIMIT = { keyPrefix: "kyc-start-subject", points: 10, durationSeconds: 3600, blockDurationSeconds: 3600 } as const;
 /** Inscription / connexion : 10 tentatives / 15 min par numéro de téléphone. */
 const AUTH_PHONE_RATE_LIMIT = { keyPrefix: "auth-phone", points: 10, durationSeconds: 900, blockDurationSeconds: 900 } as const;
 
@@ -82,6 +86,19 @@ async function main(): Promise<void> {
     },
   });
 
+  const kycModule = createKycModule({
+    config,
+    pool,
+    logger,
+    verifier,
+    sessions,
+    deviceBinding: authModule.deviceBinding,
+    encryptor: authModule.encryptor,
+    indexer: authModule.indexer,
+    inbox: new WebhookInbox(pool, logger),
+    limiters: { startBySubject: createRedisRateLimiter(redis, KYC_START_RATE_LIMIT) },
+  });
+
   const app = createApp({
     config,
     logger,
@@ -94,6 +111,7 @@ async function main(): Promise<void> {
       application.use(authModule.router);
       application.use(ledgerModule.router);
       application.use(fxModule.router);
+      application.use(kycModule.router);
     },
   });
 

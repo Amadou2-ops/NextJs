@@ -34,6 +34,10 @@ tags:
     description: Consultation du registre par le personnel habilité
   - name: fx
     description: Simulation de transfert et devis garantis (taux, frais, montant reçu)
+  - name: kyc
+    description: Vérification d'identité (niveaux, sessions de capture Onfido / Smile ID)
+  - name: webhooks
+    description: Notifications signées des prestataires (jamais appelées par les clients)
 paths:
   /health:
     get:
@@ -640,6 +644,123 @@ paths:
                       consumed: { type: boolean }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /kyc:
+    get:
+      tags: [kyc]
+      operationId: getKycOverview
+      summary: Niveau KYC, plafonds associés et vérifications du client
+      responses:
+        "200":
+          description: Situation KYC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycOverview" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /kyc/verifications:
+    post:
+      tags: [kyc]
+      operationId: startKycVerification
+      summary: Ouvre une session de capture chez le prestataire choisi pour le pays de résidence
+      description: |
+        Session mobile : requête signée par l'appareil. L'identité déclarée
+        (telle qu'elle figure sur la pièce) est exigée à la première
+        vérification et figée ensuite. Relancer l'ouverture remplace une
+        session non terminée. Niveau 3 : vigilance renforcée, décidée par la
+        conformité (pas en libre-service).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartKycVerificationRequest" }
+      responses:
+        "201":
+          description: Session ouverte
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [verification, launch]
+                properties:
+                  verification: { $ref: "#/components/schemas/KycVerification" }
+                  launch: { $ref: "#/components/schemas/KycSdkLaunch" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /kyc/verifications/{verificationId}:
+    get:
+      tags: [kyc]
+      operationId: getKycVerification
+      summary: État d'une vérification du client
+      parameters:
+        - { name: verificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Vérification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycVerification" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /kyc/verifications/{verificationId}/submitted:
+    post:
+      tags: [kyc]
+      operationId: markKycVerificationSubmitted
+      summary: Signale la fin de la capture dans le SDK (indicatif, la décision vient du prestataire)
+      description: "Session mobile : requête signée par l'appareil."
+      parameters:
+        - { name: verificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Vérification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycVerification" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /webhooks/onfido:
+    post:
+      tags: [webhooks]
+      operationId: onfidoWebhook
+      summary: Événements Onfido (workflow_run.completed)
+      description: |
+        Authentification : en-tête `X-SHA2-Signature` = hex(HMAC-SHA256(jeton
+        du webhook, corps brut)). Le résultat est ensuite relu auprès d'Onfido.
+      security: []
+      parameters:
+        - { name: X-SHA2-Signature, in: header, required: true, schema: { type: string, pattern: "^[0-9a-fA-F]{64}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /webhooks/smile-id:
+    post:
+      tags: [webhooks]
+      operationId: smileIdWebhook
+      summary: Rappels de résultat Smile ID
+      description: |
+        Authentification : champs `signature` et `timestamp` du corps (schéma
+        de signature Smile ID), horodatage dans la fenêtre de tolérance. Le
+        résultat est ensuite relu par job_status.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [signature, timestamp, PartnerParams] }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     mobileBearer:
@@ -697,6 +818,15 @@ components:
         type: string
         pattern: "^[A-Za-z0-9_-]{16,128}$"
   responses:
+    WebhookReceived:
+      description: Événement authentifié et enregistré (y compris un renvoi déjà reçu)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [received]
+            properties:
+              received: { type: boolean, const: true }
     Problem:
       description: Erreur (RFC 9457)
       content:
@@ -950,6 +1080,89 @@ components:
           description: Corridor le plus rapide ; null si plus aucun corridor ne sert ce devis.
         rateTimestamp: { type: [string, "null"], format: date-time, description: "Horodatage du plus ancien taux utilisé" }
         expiresAt: { type: [string, "null"], format: date-time, description: "null pour une simulation" }
+    KycTier:
+      type: string
+      enum: [tier_0, tier_1, tier_2, tier_3]
+    KycVerification:
+      type: object
+      required: [id, tier, provider, jobType, status, nextAction, createdAt, submittedAt, decidedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        tier: { $ref: "#/components/schemas/KycTier" }
+        provider: { type: string, enum: [onfido, smile_id] }
+        jobType: { type: string, enum: [document_verification, biometric_kyc, proof_of_address] }
+        status:
+          type: string
+          enum: [created, pending_submission, submitted, in_review, approved, rejected, resubmission_required, expired]
+        nextAction:
+          type: [string, "null"]
+          enum: [complete_capture, wait, retry, contact_support, null]
+        createdAt: { type: string, format: date-time }
+        submittedAt: { type: [string, "null"], format: date-time }
+        decidedAt: { type: [string, "null"], format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+    KycOverview:
+      type: object
+      required: [tier, limits, nextTier, declaredIdentity, attemptsRemaining, activeVerification, verifications]
+      properties:
+        tier: { $ref: "#/components/schemas/KycTier" }
+        limits:
+          type: object
+          description: Plafonds en équivalent USD (unités mineures)
+          required: [singleTransferMax, dailyMax, monthlyMax, annualMax]
+          properties:
+            singleTransferMax: { $ref: "#/components/schemas/Money" }
+            dailyMax: { $ref: "#/components/schemas/Money" }
+            monthlyMax: { $ref: "#/components/schemas/Money" }
+            annualMax: { $ref: "#/components/schemas/Money" }
+        nextTier: { type: [string, "null"], enum: [tier_1, tier_2, null] }
+        declaredIdentity: { type: boolean }
+        attemptsRemaining: { type: integer, minimum: 0 }
+        activeVerification:
+          oneOf:
+            - $ref: "#/components/schemas/KycVerification"
+            - type: "null"
+        verifications:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/KycVerification" }
+    StartKycVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [tier]
+      properties:
+        tier: { type: string, enum: [tier_1, tier_2] }
+        declaredIdentity:
+          type: object
+          additionalProperties: false
+          required: [firstName, lastName, dateOfBirth]
+          properties:
+            firstName: { type: string, minLength: 1, maxLength: 100 }
+            lastName: { type: string, minLength: 1, maxLength: 100 }
+            dateOfBirth: { type: string, format: date }
+    KycSdkLaunch:
+      description: Paramètres de lancement du SDK de capture du prestataire
+      oneOf:
+        - type: object
+          required: [provider, sdkToken, workflowRunId]
+          properties:
+            provider: { type: string, const: onfido }
+            sdkToken: { type: string }
+            workflowRunId: { type: string }
+        - type: object
+          required: [provider, partnerId, environment, jobId, userId, jobType, product, callbackUrl, signature, timestamp, webToken]
+          properties:
+            provider: { type: string, const: smile_id }
+            partnerId: { type: string }
+            environment: { type: string, enum: [sandbox, production] }
+            jobId: { type: string, format: uuid }
+            userId: { type: string, format: uuid }
+            jobType: { type: integer }
+            product: { type: string }
+            callbackUrl: { type: string, format: uri }
+            signature: { type: string }
+            timestamp: { type: string, format: date-time }
+            webToken: { type: [string, "null"], description: "Intégration web hébergée (session web uniquement)" }
     Wallet:
       type: object
       required: [currency, minorUnits, available, held]

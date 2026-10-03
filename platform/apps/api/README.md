@@ -121,6 +121,41 @@ l'API d'administration (phase 9).
   `POST /v1/quotes` (client actif, devis valable `FX_QUOTE_TTL_SECONDS`),
   `GET /v1/quotes/{id}`.
 
+## KYC (`src/modules/kyc`, `src/modules/webhooks`)
+
+- **Niveaux** : `tier_1` = pièce d'identité + selfie de vivacité ;
+  `tier_2` = preuve de domicile (exige `tier_1`) ; `tier_3` = vigilance
+  renforcée décidée par la conformité. Le niveau d'un client n'est jamais
+  écrit par l'API : la base le relève à l'approbation d'une vérification et
+  le recalcule à son expiration (migration 0020).
+- **Routage** (`kyc.provider_routes`) : Onfido par défaut ; Smile ID pour les
+  résidents d'Afrique (Biometric KYC pour NG, GH, KE, ZA, UG). Un prestataire
+  non configuré est sauté au profit de la règle suivante.
+- **Parcours** : `POST /v1/kyc/verifications` (identité déclarée à la première
+  vérification, chiffrée, figée ensuite) ouvre la session et renvoie les
+  paramètres du SDK : jeton du workflow run Onfido, ou paramètres signés
+  Smile ID (+ jeton d'intégration web pour le site). `GET /v1/kyc` donne le
+  niveau, les plafonds et la prochaine étape.
+- **Décision** : le webhook n'est qu'un signal ; le résultat est relu chez le
+  prestataire (`GET /workflow_runs/{id}`, `POST /job_status` à réponse
+  signée). Une approbation n'est appliquée que si le nom et la date de
+  naissance lus sur la pièce concordent avec l'identité déclarée, si le
+  client est majeur et si la pièce n'est pas rattachée à un autre client
+  (index aveugle du numéro) ; sinon revue manuelle (`in_review`, outbox
+  `kyc.review_required`). La base revérifie ces conditions.
+- **Onfido Studio** : chaque workflow doit exposer dans sa sortie
+  `first_name`, `last_name`, `date_of_birth`, `document_type`,
+  `issuing_country` et `document_number` (ou `document_numbers`) ; sans
+  elles, la vérification part en revue manuelle.
+- **Webhooks** : `POST /v1/webhooks/onfido` (`X-SHA2-Signature`, HMAC-SHA256
+  du corps brut) et `POST /v1/webhooks/smile-id` (signature Smile ID +
+  horodatage dans la fenêtre de tolérance). Rejet tracé dans
+  `integrations.webhook_rejections` ; événement authentifié stocké une fois,
+  minimisé (aucune donnée nominative), traité puis repris par le worker en
+  cas d'échec (`webhook-retry`, délai croissant, alerte après 10 tentatives).
+- **Worker** `kyc-sync` : relit les vérifications ouvertes (webhook perdu),
+  expire les sessions abandonnées et les approbations échues.
+
 ## Commandes
 
 ```bash

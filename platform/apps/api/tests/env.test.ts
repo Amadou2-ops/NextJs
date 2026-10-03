@@ -31,6 +31,9 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     TSA_URL: "https://tsa.example.com/rfc3161",
     TSA_TRUSTED_CERTS_PATH: "/etc/hosts",
     OPEN_EXCHANGE_RATES_APP_ID: "a".repeat(32),
+    ONFIDO_API_TOKEN: `api_live.${"c".repeat(32)}`,
+    ONFIDO_WEBHOOK_TOKEN: "d".repeat(32),
+    ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: "6f0d2a4e-7c1b-4d8e-9a3f-2b5c8e1d7a90",
     ...overrides,
   };
 }
@@ -41,6 +44,9 @@ describe("configuration", () => {
     expect(config.isProduction).toBe(true);
     expect([...config.corsAllowedOrigins]).toEqual(["https://app.transfertplus.com", "https://admin.transfertplus.com"]);
     expect(config.database.ssl).toMatchObject({ rejectUnauthorized: true });
+    expect(config.kyc.onfido).toMatchObject({ baseUrl: "https://api.eu.onfido.com/v3.6", workflows: { proof_of_address: undefined } });
+    expect(config.kyc.smileId).toBeUndefined();
+    expect(loadConfig(baseEnv({ ONFIDO_REGION: "us" })).kyc.onfido?.baseUrl).toBe("https://api.us.onfido.com/v3.6");
   });
 
   it.each([
@@ -57,6 +63,12 @@ describe("configuration", () => {
     ["origine WebAuthn en http", { WEBAUTHN_ORIGINS: "http://app.transfertplus.com" }],
     ["registre sans ancrage externe", { TSA_URL: "", TSA_TRUSTED_CERTS_PATH: "" }],
     ["aucun fournisseur de taux", { OPEN_EXCHANGE_RATES_APP_ID: "" }],
+    ["aucun prestataire KYC", { ONFIDO_API_TOKEN: "", ONFIDO_WEBHOOK_TOKEN: "" }],
+    ["jeton Onfido de bac à sable", { ONFIDO_API_TOKEN: `api_sandbox.${"c".repeat(32)}` }],
+    [
+      "Smile ID en bac à sable",
+      { SMILE_ID_PARTNER_ID: "2343", SMILE_ID_API_KEY: "k".repeat(32), SMILE_ID_CALLBACK_URL: "https://api.transfertplus.com/v1/webhooks/smile-id" },
+    ],
   ])("refuse en production : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });
@@ -78,6 +90,11 @@ describe("configuration", () => {
     ["identifiant Open Exchange Rates invalide", { OPEN_EXCHANGE_RATES_APP_ID: "not-an-app-id" }],
     ["fournisseur principal non configuré", { FX_PRIMARY_PROVIDER: "fixer" }],
     ["clé Fixer invalide", { FIXER_API_KEY: "short" }],
+    ["Onfido sans jeton de webhook", { ONFIDO_WEBHOOK_TOKEN: "" }],
+    ["Onfido sans workflow", { ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: "" }],
+    ["workflow Onfido invalide", { ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: "workflow-1" }],
+    ["Smile ID incomplet", { SMILE_ID_PARTNER_ID: "2343" }],
+    ["rappel Smile ID en http", { SMILE_ID_PARTNER_ID: "2343", SMILE_ID_API_KEY: "k".repeat(32), SMILE_ID_ENVIRONMENT: "production", SMILE_ID_CALLBACK_URL: "http://api.transfertplus.com/cb" }],
   ])("refuse dans tous les environnements : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });

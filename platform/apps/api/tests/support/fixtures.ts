@@ -144,14 +144,17 @@ export interface SeededCustomer {
 let phoneCounter = 0;
 
 /** Crée un client actif, un appareil de confiance et deux sessions (mobile, web). */
-export async function seedCustomer(owner: pg.Pool, options: { readonly webAssuranceLevel?: 1 | 2 } = {}): Promise<SeededCustomer> {
+export async function seedCustomer(
+  owner: pg.Pool,
+  options: { readonly webAssuranceLevel?: 1 | 2; readonly countryOfResidence?: string } = {},
+): Promise<SeededCustomer> {
   phoneCounter += 1;
   const user = await owner.query<{ id: string }>(
     `INSERT INTO identity.users (phone_bidx, phone_enc, phone_country, password_hash, country_of_residence,
                                  pii_key_id, status, phone_verified_at)
-     VALUES (sha256(convert_to($1, 'UTF8')), '\\x01', 'FR', '$argon2id$v=19$test', 'FR', 'pii-2026-01', 'active', now())
+     VALUES (sha256(convert_to($1, 'UTF8')), '\\x01', 'FR', '$argon2id$v=19$test', $2, 'pii-2026-01', 'active', now())
      RETURNING id`,
-    [`api-test-${randomUUID()}-${phoneCounter}`],
+    [`api-test-${randomUUID()}-${phoneCounter}`, options.countryOfResidence ?? "FR"],
   );
   const userId = user.rows[0]!.id;
   const device = await owner.query<{ id: string }>(

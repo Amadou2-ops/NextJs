@@ -7,10 +7,17 @@ import { ChainAnchorJob } from "./jobs/anchor.job.js";
 import { FxRefreshJob } from "./jobs/fxRefresh.job.js";
 import { MaintenanceJob } from "./jobs/maintenance.job.js";
 import { ReconciliationJob } from "./jobs/reconciliation.job.js";
+import { KycSyncJob } from "./jobs/kycSync.job.js";
 import { JobScheduler } from "./jobs/scheduler.js";
 import type { Job } from "./jobs/scheduler.js";
+import { WebhookRetryJob } from "./jobs/webhookRetry.job.js";
+import { BlindIndexer } from "./lib/crypto/blindIndex.js";
+import { FieldEncryptor, KeyringKeyProvider } from "./lib/crypto/fieldEncryption.js";
 import { parsePemBundle, TimestampAuthorityClient } from "./lib/crypto/rfc3161.js";
 import { configuredRateProviders, createRateIngestion } from "./modules/fx/index.js";
+import { configuredKycProviders, createKycService } from "./modules/kyc/index.js";
+import { registerKycWebhookHandlers } from "./modules/kyc/kyc.webhooks.js";
+import { WebhookInbox } from "./modules/webhooks/webhookInbox.js";
 
 /**
  * Processus de tâches de fond (séparé de l'API HTTP) : rapprochement
@@ -19,6 +26,7 @@ import { configuredRateProviders, createRateIngestion } from "./modules/fx/index
  */
 
 const MAINTENANCE_INTERVAL_MS = 6 * 3600 * 1000;
+const WEBHOOK_RETRY_INTERVAL_MS = 60 * 1000;
 
 async function main(): Promise<void> {
   let config;
@@ -46,6 +54,24 @@ async function main(): Promise<void> {
   } else {
     jobs.push(new FxRefreshJob(createRateIngestion(config, pool, logger), rateProviders, logger, config.fx.refreshIntervalMs));
   }
+  const kycProviders = configuredKycProviders(config);
+  const inbox = new WebhookInbox(pool, logger);
+  if (kycProviders.size === 0) {
+    logger.warn("aucun prestataire KYC configuré : la vérification d'identité est indisponible");
+  } else {
+    const kyc = createKycService({
+      config,
+      pool,
+      logger,
+      encryptor: new FieldEncryptor(new KeyringKeyProvider(config.crypto.piiKeyring.activeKeyId, config.crypto.piiKeyring.keys)),
+      indexer: new BlindIndexer(config.crypto.blindIndexKey),
+      providers: kycProviders,
+    });
+    registerKycWebhookHandlers(inbox, kyc, logger);
+    jobs.push(new KycSyncJob(kyc, logger, config.kyc.syncIntervalMs));
+  }
+  jobs.push(new WebhookRetryJob(inbox, logger, WEBHOOK_RETRY_INTERVAL_MS));
+
   const tsa = config.ledger.timestampAuthority;
   if (tsa === undefined) {
     logger.warn("ancrage externe du registre désactivé (TSA_URL non configurée)");

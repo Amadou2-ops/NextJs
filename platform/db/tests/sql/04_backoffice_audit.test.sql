@@ -116,10 +116,12 @@ BEGIN
     PERFORM set_config('app.actor_type', 'admin', true);
     PERFORM set_config('app.actor_id', v_risk_a::text, true);
     PERFORM pg_temp.assert_error(format(
-        $q$UPDATE kyc.verifications SET status = 'approved', decided_at = now() WHERE id = %L$q$, v_verification),
+        $q$UPDATE kyc.verifications SET status = 'approved', decided_at = now(), expires_at = now() + interval '1 year'
+            WHERE id = %L$q$, v_verification),
         'LG007', 'décision manuelle sans identification de l''analyste refusée');
     UPDATE kyc.verifications
-       SET status = 'approved', decided_at = now(), decided_by_admin_id = v_risk_a
+       SET status = 'approved', decided_at = now(), decided_by_admin_id = v_risk_a,
+           expires_at = now() + interval '2 years'
      WHERE id = v_verification;
 
     PERFORM pg_temp.assert_true(
