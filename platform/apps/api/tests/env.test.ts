@@ -34,6 +34,9 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     ONFIDO_API_TOKEN: `api_live.${"c".repeat(32)}`,
     ONFIDO_WEBHOOK_TOKEN: "d".repeat(32),
     ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: "6f0d2a4e-7c1b-4d8e-9a3f-2b5c8e1d7a90",
+    FLUTTERWAVE_SECRET_KEY: `FLWSECK-${"e".repeat(32)}-X`,
+    FLUTTERWAVE_WEBHOOK_HASH: "f".repeat(32),
+    FLUTTERWAVE_REDIRECT_URL: "https://app.transfertplus.com/paiement/retour",
     ...overrides,
   };
 }
@@ -47,6 +50,12 @@ describe("configuration", () => {
     expect(config.kyc.onfido).toMatchObject({ baseUrl: "https://api.eu.onfido.com/v3.6", workflows: { proof_of_address: undefined } });
     expect(config.kyc.smileId).toBeUndefined();
     expect(loadConfig(baseEnv({ ONFIDO_REGION: "us" })).kyc.onfido?.baseUrl).toBe("https://api.us.onfido.com/v3.6");
+    expect(config.payments.flutterwave).toBeDefined();
+    expect(config.payments.stripe).toBeUndefined();
+    const thunes = loadConfig(
+      baseEnv({ THUNES_BASE_URL: "https://api-mt.thunes.com/", THUNES_API_KEY: "key-0001", THUNES_API_SECRET: "s".repeat(24), THUNES_CALLBACK_URL: "https://api.transfertplus.com/v1/webhooks/thunes", THUNES_CALLBACK_ALLOWED_IPS: "203.0.113.10,2001:db8::1" }),
+    ).payments.thunes;
+    expect(thunes).toMatchObject({ baseUrl: "https://api-mt.thunes.com", settlementCurrency: "USD", callbackAllowedIps: ["203.0.113.10", "2001:db8::1"] });
   });
 
   it.each([
@@ -64,6 +73,12 @@ describe("configuration", () => {
     ["registre sans ancrage externe", { TSA_URL: "", TSA_TRUSTED_CERTS_PATH: "" }],
     ["aucun fournisseur de taux", { OPEN_EXCHANGE_RATES_APP_ID: "" }],
     ["aucun prestataire KYC", { ONFIDO_API_TOKEN: "", ONFIDO_WEBHOOK_TOKEN: "" }],
+    ["aucun prestataire de paiement", { FLUTTERWAVE_SECRET_KEY: "", FLUTTERWAVE_WEBHOOK_HASH: "", FLUTTERWAVE_REDIRECT_URL: "" }],
+    ["clé Flutterwave de test", { FLUTTERWAVE_SECRET_KEY: `FLWSECK_TEST-${"e".repeat(32)}-X` }],
+    [
+      "clé Stripe de test",
+      { STRIPE_SECRET_KEY: `sk_test_${"a".repeat(24)}`, STRIPE_PUBLISHABLE_KEY: `pk_test_${"b".repeat(24)}`, STRIPE_WEBHOOK_SECRET: `whsec_${"c".repeat(32)}` },
+    ],
     ["jeton Onfido de bac à sable", { ONFIDO_API_TOKEN: `api_sandbox.${"c".repeat(32)}` }],
     [
       "Smile ID en bac à sable",
@@ -94,6 +109,13 @@ describe("configuration", () => {
     ["Onfido sans workflow", { ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: "" }],
     ["workflow Onfido invalide", { ONFIDO_WORKFLOW_DOCUMENT_VERIFICATION: "workflow-1" }],
     ["Smile ID incomplet", { SMILE_ID_PARTNER_ID: "2343" }],
+    ["Stripe incomplet", { STRIPE_SECRET_KEY: `sk_live_${"a".repeat(24)}` }],
+    [
+      "clés Stripe de modes différents",
+      { STRIPE_SECRET_KEY: `sk_live_${"a".repeat(24)}`, STRIPE_PUBLISHABLE_KEY: `pk_test_${"b".repeat(24)}`, STRIPE_WEBHOOK_SECRET: `whsec_${"c".repeat(32)}` },
+    ],
+    ["Thunes incomplet", { THUNES_BASE_URL: "https://api-mt.thunes.com", THUNES_API_KEY: "key-0001" }],
+    ["retour Flutterwave en http", { FLUTTERWAVE_REDIRECT_URL: "http://app.transfertplus.com/retour" }],
     ["rappel Smile ID en http", { SMILE_ID_PARTNER_ID: "2343", SMILE_ID_API_KEY: "k".repeat(32), SMILE_ID_ENVIRONMENT: "production", SMILE_ID_CALLBACK_URL: "http://api.transfertplus.com/cb" }],
   ])("refuse dans tous les environnements : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);

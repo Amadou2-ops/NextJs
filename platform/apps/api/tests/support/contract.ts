@@ -6,7 +6,9 @@ import { createAuthModule } from "../../src/modules/auth/index.js";
 import { BlindIndexer } from "../../src/lib/crypto/blindIndex.js";
 import { FieldEncryptor, KeyringKeyProvider } from "../../src/lib/crypto/fieldEncryption.js";
 import { createFxModule } from "../../src/modules/fx/index.js";
+import { MfaService } from "../../src/modules/auth/mfa.service.js";
 import { createKycModule } from "../../src/modules/kyc/index.js";
+import { createTransfersModule } from "../../src/modules/transfers/index.js";
 import { WebhookInbox } from "../../src/modules/webhooks/webhookInbox.js";
 import { createLedgerModule } from "../../src/modules/ledger/index.js";
 import { buildTestConfig, createApiPool, createTestKeys, silentLogger } from "./fixtures.js";
@@ -25,6 +27,16 @@ export async function routesForContract(): Promise<readonly { readonly method: s
     SMILE_ID_PARTNER_ID: "2343",
     SMILE_ID_API_KEY: "k".repeat(32),
     SMILE_ID_CALLBACK_URL: "https://api.transfertplus.test/v1/webhooks/smile-id",
+    STRIPE_SECRET_KEY: `sk_test_${"a".repeat(24)}`,
+    STRIPE_PUBLISHABLE_KEY: `pk_test_${"b".repeat(24)}`,
+    STRIPE_WEBHOOK_SECRET: `whsec_${"c".repeat(32)}`,
+    FLUTTERWAVE_SECRET_KEY: `FLWSECK_TEST-${"d".repeat(32)}-X`,
+    FLUTTERWAVE_WEBHOOK_HASH: "f".repeat(32),
+    FLUTTERWAVE_REDIRECT_URL: "https://app.transfertplus.test/retour",
+    THUNES_BASE_URL: "https://api-mt.thunes.test",
+    THUNES_API_KEY: "key-0001",
+    THUNES_API_SECRET: "s".repeat(24),
+    THUNES_CALLBACK_URL: "https://api.transfertplus.test/v1/webhooks/thunes",
   });
   const pool = createApiPool(config);
   try {
@@ -63,9 +75,23 @@ export async function routesForContract(): Promise<readonly { readonly method: s
       inbox: new WebhookInbox(pool, silentLogger),
       limiters: { startBySubject: limiter },
     });
-    // Le routeur KYC regroupe deux sous-routeurs (client, webhooks).
-    const kycStack = (kycModule.router as unknown as { readonly stack: readonly { readonly handle: unknown }[] }).stack.map((layer) => layer.handle);
-    const stack = [module.router, ledgerModule.router, fxModule.router, ...kycStack].flatMap((router) => (router as { readonly stack: readonly RouteLayer[] }).stack);
+    const encryptor = new FieldEncryptor(new KeyringKeyProvider(config.crypto.piiKeyring.activeKeyId, config.crypto.piiKeyring.keys));
+    const transfersModule = createTransfersModule({
+      config,
+      pool,
+      logger: silentLogger,
+      verifier: new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks),
+      sessions: new PostgresSessionValidator(pool),
+      deviceBinding: module.deviceBinding,
+      mfa: new MfaService(pool, encryptor),
+      encryptor,
+      indexer: new BlindIndexer(config.crypto.blindIndexKey),
+      inbox: new WebhookInbox(pool, silentLogger),
+      limiters: { transfersBySubject: limiter, recipientsBySubject: limiter },
+    });
+    // Les routeurs KYC et transferts regroupent des sous-routeurs (client, webhooks).
+    const nested = (router: unknown): unknown[] => (router as { readonly stack: readonly { readonly handle: unknown }[] }).stack.map((layer) => layer.handle);
+    const stack = [module.router, ledgerModule.router, fxModule.router, ...nested(kycModule.router), ...nested(transfersModule.router)].flatMap((router) => (router as { readonly stack: readonly RouteLayer[] }).stack);
     return stack.flatMap((layer) =>
       layer.route === undefined
         ? []

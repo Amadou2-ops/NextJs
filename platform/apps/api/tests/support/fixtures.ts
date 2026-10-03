@@ -212,3 +212,33 @@ export async function seedAdmin(owner: pg.Pool, role: "support" | "risk_manager"
   );
   return { adminId, sessionId: session.rows[0]!.id };
 }
+
+/**
+ * Accorde un niveau KYC comme en production : vérification approuvée par le
+ * prestataire avec preuve d'identité concordante (la base relève le niveau).
+ */
+export async function grantKycTier(owner: pg.Pool, userId: string, tier: "tier_1" | "tier_2" = "tier_1"): Promise<void> {
+  const client = await owner.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.actor_type', 'provider', true), set_config('app.actor_id', 'onfido', true)");
+    const verification = await client.query<{ id: string }>(
+      `INSERT INTO kyc.verifications (user_id, provider, job_type, tier_requested, provider_reference)
+       VALUES ($1, 'onfido', 'document_verification', $2::kyc.kyc_tier, $3) RETURNING id`,
+      [userId, tier, `run-${randomUUID()}`],
+    );
+    const id = verification.rows[0]!.id;
+    await client.query("UPDATE kyc.verifications SET status = 'submitted', submitted_at = now() WHERE id = $1", [id]);
+    await client.query(
+      "INSERT INTO kyc.identity_evidence (verification_id, user_id, provider, pii_key_id, declared_identity_match) VALUES ($1, $2, 'onfido', 'pii-2026-01', true)",
+      [id, userId],
+    );
+    await client.query("UPDATE kyc.verifications SET status = 'approved', decided_at = now(), expires_at = now() + interval '2 years' WHERE id = $1", [id]);
+    await client.query("COMMIT");
+  } catch (error: unknown) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}

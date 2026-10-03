@@ -21,6 +21,7 @@ export const ERROR_CODES = [
   "QUOTE_EXPIRED_OR_CONSUMED",
   "INVALID_PAYMENT_TRANSITION",
   "FOUR_EYES_VIOLATION",
+  "KYC_LIMIT_EXCEEDED",
   "INVALID_CREDENTIALS",
   "INVALID_VERIFICATION_CODE",
   "VERIFICATION_EXPIRED",
@@ -186,6 +187,12 @@ const SQLSTATE_MAPPINGS: Readonly<Record<string, SqlStateMapping>> = {
   TR001: { code: "INVALID_STATUS_TRANSITION", status: 409, title: "Changement de statut impossible", clientDetail: "Ce changement de statut n'est pas autorisé." },
   TR002: { code: "QUOTE_EXPIRED_OR_CONSUMED", status: 409, title: "Devis invalide", clientDetail: "Le devis a expiré ou a déjà été utilisé. Demandez un nouveau devis." },
   PY001: { code: "INVALID_PAYMENT_TRANSITION", status: 409, title: "Changement de statut de paiement impossible", clientDetail: "Ce changement de statut de paiement n'est pas autorisé." },
+  KY001: {
+    code: "KYC_LIMIT_EXCEEDED",
+    status: 403,
+    title: "Plafond de vérification atteint",
+    clientDetail: "Ce transfert dépasse les plafonds de votre niveau de vérification d'identité. Complétez votre vérification pour les relever.",
+  },
   BO001: { code: "FOUR_EYES_VIOLATION", status: 403, title: "Double validation requise", clientDetail: "Cette action exige l'approbation d'un second membre habilité." },
 };
 

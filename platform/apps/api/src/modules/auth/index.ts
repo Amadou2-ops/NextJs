@@ -42,6 +42,7 @@ export interface AuthModule {
   readonly deviceBinding: DeviceBindingService;
   readonly encryptor: FieldEncryptor;
   readonly indexer: BlindIndexer;
+  readonly mfa: MfaService;
 }
 
 export function createAuthModule(params: {
@@ -111,5 +112,6 @@ export function createAuthModule(params: {
     deviceBinding,
     encryptor,
     indexer,
+    mfa,
   };
 }

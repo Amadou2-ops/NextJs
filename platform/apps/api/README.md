@@ -156,6 +156,47 @@ l'API d'administration (phase 9).
 - **Worker** `kyc-sync` : relit les vérifications ouvertes (webhook perdu),
   expire les sessions abandonnées et les approbations échues.
 
+## Transferts et paiements (`src/modules/transfers`, `src/modules/payments`, `src/modules/recipients`)
+
+- **Bénéficiaires** : nom et coordonnées chiffrés (contexte lié à la ligne),
+  index aveugle des coordonnées (doublons, comptes partagés), IBAN validé
+  (ISO 13616), numéro mobile du pays du bénéficiaire ; jamais modifiés,
+  seulement archivés.
+- **Création** (`POST /v1/transfers`, `Idempotency-Key` obligatoire) :
+  autorisation renforcée (signature de l'appareil en mobile, code TOTP en
+  web) ; la base vérifie le devis, le bénéficiaire et les plafonds KYC
+  (opération, 24 h, 30 j, 365 j, sous verrou du client). Portefeuille :
+  réservation immédiate. Carte (Stripe PaymentIntent) ou virement / mobile
+  money (page Flutterwave) : la réponse contient l'action de paiement ; le
+  secret client Stripe n'est jamais stocké.
+- **Comptabilité** : réservation `transfer:<id>:funding`, paiement sortant
+  `transfer:<id>:payout:<tentative>` (frais, position de change par devise,
+  compensation chez le prestataire), règlement, frais prestataires,
+  contre-passation en cas d'échec, remboursement `transfer:<id>:refund`. La
+  base refuse toute transition de statut non adossée à son écriture ou à sa
+  tentative (migration 0021).
+- **Routage** : corridor actif le moins prioritaire puis le moins coûteux,
+  hors corridors déjà essayés, disjoncteur par prestataire (sonde unique en
+  semi-ouvert), trésorerie disponible chez le prestataire vérifiée sous
+  verrou (préfinancement − paiements non réglés). Jusqu'à `PAYOUT_MAX_ROUTES`
+  routes, puis remboursement automatique (portefeuille ou moyen de paiement
+  d'origine).
+- **Issue incertaine** (réponse perdue) : jamais de nouvelle route ;
+  relecture chez le prestataire (Thunes par identifiant externe, Stripe par
+  clé d'idempotence) ou alerte de réconciliation (`payments.outcome_unknown`).
+- **Webhooks** : Stripe (`Stripe-Signature`, tolérance 5 min, corps
+  entièrement signé), Flutterwave (`verif-hash`, état relu par l'API),
+  Thunes (liste blanche facultative, transaction relue). Montants encaissés
+  comparés à l'ordre au centime près ; un écart bloque le financement et
+  alerte. Paiement tardif sur transfert annulé : compte d'attente + alerte.
+  Rétrofacturations Stripe : perte constatée puis contre-passée si gagnée.
+- **Worker** `payment-sync` : tentatives restées ouvertes, financements
+  expirés (`PAYMENTS_FUNDING_TTL_MINUTES`), paiements sortants et
+  remboursements en attente.
+- Stripe sert à l'encaissement : un paiement sortant Stripe Connect exigerait
+  un compte connecté vérifié par bénéficiaire, inadapté aux particuliers ;
+  les paiements sortants passent par Flutterwave et Thunes.
+
 ## Commandes
 
 ```bash

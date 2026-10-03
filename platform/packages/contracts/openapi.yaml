@@ -36,6 +36,10 @@ tags:
     description: Simulation de transfert et devis garantis (taux, frais, montant reçu)
   - name: kyc
     description: Vérification d'identité (niveaux, sessions de capture Onfido / Smile ID)
+  - name: recipients
+    description: Bénéficiaires du client (coordonnées chiffrées)
+  - name: transfers
+    description: Transferts, financement, suivi et annulation
   - name: webhooks
     description: Notifications signées des prestataires (jamais appelées par les clients)
 paths:
@@ -761,6 +765,230 @@ paths:
         "200": { $ref: "#/components/responses/WebhookReceived" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
+  /recipients:
+    get:
+      tags: [recipients]
+      operationId: listRecipients
+      summary: Bénéficiaires actifs du client
+      responses:
+        "200":
+          description: Bénéficiaires
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recipients]
+                properties:
+                  recipients:
+                    type: array
+                    items: { $ref: "#/components/schemas/Recipient" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [recipients]
+      operationId: createRecipient
+      summary: Enregistre un bénéficiaire (coordonnées chiffrées, jamais modifiées ensuite)
+      description: "Session mobile : requête signée par l'appareil."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRecipientRequest" }
+      responses:
+        "201":
+          description: Bénéficiaire enregistré
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recipient" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /recipients/{recipientId}:
+    delete:
+      tags: [recipients]
+      operationId: archiveRecipient
+      summary: Archive un bénéficiaire (l'historique des transferts est conservé)
+      parameters:
+        - { name: recipientId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Bénéficiaire archivé }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /transfers:
+    get:
+      tags: [transfers]
+      operationId: listTransfers
+      summary: Transferts du client, du plus récent au plus ancien
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: before, in: query, required: false, description: "Curseur nextCursor de la page précédente", schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Transferts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transfers, nextCursor]
+                properties:
+                  transfers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Transfer" }
+                  nextCursor: { type: [string, "null"], format: date-time }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [transfers]
+      operationId: createTransfer
+      summary: Crée un transfert à partir d'un devis garanti
+      description: |
+        En-tête Idempotency-Key obligatoire (rejeu : même transfert, statut
+        200). Autorisation renforcée : session mobile signée par l'appareil,
+        ou code TOTP (`totpCode`) pour une session web. Financement par le
+        portefeuille : réservation immédiate. Financement externe : la
+        réponse contient l'action de paiement (`funding`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTransferRequest" }
+      responses:
+        "200":
+          description: Requête rejouée (même transfert)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedTransfer" }
+        "201":
+          description: Transfert créé
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedTransfer" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /transfers/{transferId}:
+    get:
+      tags: [transfers]
+      operationId: getTransfer
+      summary: Détail d'un transfert et historique des statuts
+      parameters:
+        - { name: transferId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Transfert
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Transfer"
+                  - type: object
+                    required: [history]
+                    properties:
+                      history:
+                        type: array
+                        items:
+                          type: object
+                          required: [status, at]
+                          properties:
+                            status: { $ref: "#/components/schemas/TransferStatus" }
+                            at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /transfers/{transferId}/funding:
+    get:
+      tags: [transfers]
+      operationId: getTransferFunding
+      summary: Action de paiement à jour pour un transfert en attente de financement
+      parameters:
+        - { name: transferId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Action de paiement
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [funding]
+                properties:
+                  funding: { $ref: "#/components/schemas/FundingAction" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /transfers/{transferId}/cancel:
+    post:
+      tags: [transfers]
+      operationId: cancelTransfer
+      summary: Annule un transfert non encore payé au bénéficiaire (remboursement si déjà financé)
+      description: "Session mobile : requête signée par l'appareil."
+      parameters:
+        - { name: transferId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Transfert annulé ou remboursé
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transfer" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /webhooks/stripe:
+    post:
+      tags: [webhooks]
+      operationId: stripeWebhook
+      summary: Événements Stripe (PaymentIntent, remboursements, litiges)
+      description: "En-tête Stripe-Signature (t=…,v1=HMAC-SHA256), tolérance 5 minutes."
+      security: []
+      parameters:
+        - { name: Stripe-Signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /webhooks/flutterwave:
+    post:
+      tags: [webhooks]
+      operationId: flutterwaveWebhook
+      summary: Événements Flutterwave (charge.completed, transfer.completed)
+      description: "En-tête verif-hash (secret partagé) ; l'état est relu chez Flutterwave."
+      security: []
+      parameters:
+        - { name: verif-hash, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /webhooks/thunes:
+    post:
+      tags: [webhooks]
+      operationId: thunesWebhook
+      summary: Rappels de statut Thunes
+      description: "Liste blanche d'adresses facultative ; la transaction est toujours relue chez Thunes."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [external_id] }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     mobileBearer:
@@ -858,7 +1086,7 @@ components:
     ErrorCode:
       type: string
       description: |
-        Codes métier stables. Les codes LG*/TR*/PY*/BO* reprennent les
+        Codes métier stables. Les codes LG*/TR*/PY*/KY*/BO* reprennent les
         SQLSTATE levés par la base (voir db/migrations/0001).
       enum:
         - INSUFFICIENT_FUNDS
@@ -874,6 +1102,7 @@ components:
         - QUOTE_EXPIRED_OR_CONSUMED
         - INVALID_PAYMENT_TRANSITION
         - FOUR_EYES_VIOLATION
+        - KYC_LIMIT_EXCEEDED
         - INVALID_CREDENTIALS
         - INVALID_VERIFICATION_CODE
         - VERIFICATION_EXPIRED
@@ -1163,6 +1392,121 @@ components:
             signature: { type: string }
             timestamp: { type: string, format: date-time }
             webToken: { type: [string, "null"], description: "Intégration web hébergée (session web uniquement)" }
+    TransferStatus:
+      type: string
+      enum: [created, awaiting_funding, funding_processing, funded, compliance_review, payout_pending, payout_processing,
+             completed, payout_failed, cancelled, refund_pending, refunded]
+    Recipient:
+      type: object
+      required: [id, country, currency, payoutMethod, firstName, lastName, displayHint, mobileOperator, relationship, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        country: { $ref: "#/components/schemas/CountryCode" }
+        currency: { $ref: "#/components/schemas/CurrencyCode" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        firstName: { type: string }
+        lastName: { type: string }
+        displayHint: { type: string, description: "Indice non sensible (ex. « •••• 4567 · Orange Money »)" }
+        mobileOperator: { type: [string, "null"] }
+        relationship: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+    CreateRecipientRequest:
+      type: object
+      additionalProperties: false
+      required: [country, currency, firstName, lastName, account]
+      properties:
+        country: { $ref: "#/components/schemas/CountryCode" }
+        currency: { $ref: "#/components/schemas/CurrencyCode" }
+        firstName: { type: string, minLength: 1, maxLength: 100 }
+        lastName: { type: string, minLength: 1, maxLength: 100 }
+        relationship: { type: string, enum: [family, friend, self, business, other] }
+        account:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, msisdn, operator]
+              properties:
+                kind: { type: string, const: mobile_money }
+                msisdn: { type: string }
+                operator: { type: string, enum: [orange_money, wave, mtn_momo, moov_money, free_money, mpesa, airtel_money, vodafone_cash] }
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              description: IBAN, ou numéro de compte et code banque
+              properties:
+                kind: { type: string, const: bank_account }
+                iban: { type: string }
+                accountNumber: { type: string }
+                bankCode: { type: string }
+            - type: object
+              additionalProperties: false
+              required: [kind, msisdn]
+              properties:
+                kind: { type: string, const: cash_pickup }
+                msisdn: { type: string }
+    CreateTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [quoteId, recipientId, purposeCode]
+      properties:
+        quoteId: { type: string, format: uuid }
+        recipientId: { type: string, format: uuid }
+        purposeCode:
+          type: string
+          enum: [family_support, education, medical_treatment, gift, household_expenses, savings, travel, other]
+        totpCode: { type: string, pattern: "^\\d{6}$", description: "Session web : code de l'application d'authentification" }
+    Transfer:
+      type: object
+      required: [id, reference, status, statusReason, recipient, sendAmount, fee, totalToPay, receiveAmount, exchangeRate,
+                 fundingMethod, payoutMethod, purposeCode, createdAt, fundedAt, completedAt, cancelledAt, refundedAt]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string, pattern: "^TP[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{10}$" }
+        status: { $ref: "#/components/schemas/TransferStatus" }
+        statusReason: { type: [string, "null"] }
+        recipient:
+          type: object
+          required: [id, displayHint]
+          properties:
+            id: { type: string, format: uuid }
+            displayHint: { type: string }
+        sendAmount: { $ref: "#/components/schemas/Money" }
+        fee: { $ref: "#/components/schemas/Money" }
+        totalToPay: { $ref: "#/components/schemas/Money" }
+        receiveAmount: { $ref: "#/components/schemas/Money" }
+        exchangeRate: { $ref: "#/components/schemas/ExchangeRate" }
+        fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        purposeCode: { type: string }
+        createdAt: { type: string, format: date-time }
+        fundedAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        cancelledAt: { type: [string, "null"], format: date-time }
+        refundedAt: { type: [string, "null"], format: date-time }
+    FundingAction:
+      oneOf:
+        - type: object
+          required: [type, clientSecret, publishableKey]
+          description: Paiement par carte (Stripe Payment Element)
+          properties:
+            type: { type: string, const: stripe_payment_intent }
+            clientSecret: { type: string }
+            publishableKey: { type: string }
+        - type: object
+          required: [type, url]
+          description: Page de paiement hébergée (Flutterwave)
+          properties:
+            type: { type: string, const: redirect }
+            url: { type: string, format: uri }
+    CreatedTransfer:
+      type: object
+      required: [transfer, funding]
+      properties:
+        transfer: { $ref: "#/components/schemas/Transfer" }
+        funding:
+          oneOf:
+            - $ref: "#/components/schemas/FundingAction"
+            - type: "null"
     Wallet:
       type: object
       required: [currency, minorUnits, available, held]

@@ -14,7 +14,7 @@ import { RateProviderError } from "../src/modules/fx/providers/types.js";
 import type { RateProvider, RateSet } from "../src/modules/fx/providers/types.js";
 import { QuoteService } from "../src/modules/fx/quote.service.js";
 import { RateIngestionService } from "../src/modules/fx/rateIngestion.service.js";
-import { buildTestApp, buildTestConfig, createApiPool, createOwnerPool, createTestKeys, seedCustomer, signAccessToken, silentLogger } from "./support/fixtures.js";
+import { buildTestApp, buildTestConfig, createApiPool, createOwnerPool, createTestKeys, grantKycTier, seedCustomer, signAccessToken, silentLogger } from "./support/fixtures.js";
 import type { SeededCustomer } from "./support/fixtures.js";
 
 const keys = await createTestKeys();
@@ -271,6 +271,7 @@ describe("devis", () => {
     expect(stored.rows[0]).toMatchObject({ usd_equivalent: "10869", margin_bps: 150, funding_method: "card" });
     expect(stored.rows[0]?.source_leg_snapshot_id).not.toBeNull();
 
+    await grantKycTier(owner, customer.userId);
     const recipient = await owner.query<{ id: string }>(
       `INSERT INTO transfers.recipients (user_id, country, currency, payout_method, full_name_enc, account_details_enc, account_details_bidx,
                                         display_hint, mobile_operator, pii_key_id)

@@ -217,6 +217,33 @@ const rawEnvironmentSchema = z.object({
   KYC_MAX_ATTEMPTS_PER_30_DAYS: z.coerce.number().int().min(1).max(20).default(3),
   KYC_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),
 
+  // Paiements — Stripe (encaissement carte / Apple Pay / Google Pay),
+  // Flutterwave (encaissement mobile money / virement, paiements sortants
+  // Afrique) et Thunes (paiements sortants internationaux).
+  STRIPE_SECRET_KEY: z.string().regex(/^(sk|rk)_(live|test)_[A-Za-z0-9]{16,}$/).optional(),
+  STRIPE_PUBLISHABLE_KEY: z.string().regex(/^pk_(live|test)_[A-Za-z0-9]{16,}$/).optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().regex(/^whsec_[A-Za-z0-9+/=]{16,}$/).optional(),
+  STRIPE_API_VERSION: z.string().regex(/^\d{4}-\d{2}-\d{2}(\.[a-z]+)?$/).default("2026-09-30.endive"),
+  FLUTTERWAVE_SECRET_KEY: z.string().regex(/^FLWSECK(_TEST)?-[A-Za-z0-9]{16,}-X$/).optional(),
+  FLUTTERWAVE_WEBHOOK_HASH: z.string().min(16).max(200).optional(),
+  FLUTTERWAVE_REDIRECT_URL: z.url({ protocol: /^https?$/ }).optional(),
+  THUNES_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+  THUNES_API_KEY: z.string().regex(/^[A-Za-z0-9_-]{8,}$/).optional(),
+  THUNES_API_SECRET: z.string().min(16).optional(),
+  THUNES_CALLBACK_URL: z.url({ protocol: /^https?$/ }).optional(),
+  // Devise du compte de préfinancement Thunes (devise source des cotations).
+  THUNES_SETTLEMENT_CURRENCY: z.string().regex(/^[A-Z]{3}$/).default("USD"),
+  // Adresses d'émission des rappels Thunes (liste blanche facultative).
+  THUNES_CALLBACK_ALLOWED_IPS: csv.pipe(z.array(z.union([z.ipv4(), z.ipv6()])).max(20)).optional(),
+  // Délai de paiement d'un transfert avant annulation automatique.
+  PAYMENTS_FUNDING_TTL_MINUTES: z.coerce.number().int().min(10).max(1440).default(60),
+  // Nombre maximal de routes de paiement sortant essayées avant remboursement.
+  PAYOUT_MAX_ROUTES: z.coerce.number().int().min(1).max(5).default(3),
+  // Disjoncteur des prestataires.
+  CIRCUIT_FAILURE_THRESHOLD: z.coerce.number().int().min(2).max(50).default(5),
+  CIRCUIT_OPEN_SECONDS: z.coerce.number().int().min(10).max(3600).default(60),
+  PAYMENTS_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(60).default(5),
+
   // Périodicité des tâches de fond (worker).
   RECONCILIATION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   ANCHOR_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
@@ -310,6 +337,27 @@ export interface AppConfig {
     readonly verificationValidityDays: number;
     readonly sessionTtlHours: number;
     readonly maxAttemptsPer30Days: number;
+    readonly syncIntervalMs: number;
+  };
+  readonly payments: {
+    readonly stripe:
+      | { readonly secretKey: string; readonly publishableKey: string; readonly webhookSecret: string; readonly apiVersion: string }
+      | undefined;
+    readonly flutterwave: { readonly secretKey: string; readonly webhookHash: string; readonly redirectUrl: string } | undefined;
+    readonly thunes:
+      | {
+          readonly baseUrl: string;
+          readonly apiKey: string;
+          readonly apiSecret: string;
+          readonly callbackUrl: string;
+          readonly settlementCurrency: string;
+          readonly callbackAllowedIps: readonly string[];
+        }
+      | undefined;
+    readonly fundingTtlMinutes: number;
+    readonly payoutMaxRoutes: number;
+    readonly circuitFailureThreshold: number;
+    readonly circuitOpenSeconds: number;
     readonly syncIntervalMs: number;
   };
   readonly ledger: {
@@ -412,6 +460,35 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (smileConfigured && raw.SMILE_ID_ENVIRONMENT !== "production") {
       problems.push("la production exige SMILE_ID_ENVIRONMENT=production");
     }
+  }
+
+  const groups: readonly (readonly [string, readonly (string | URL | undefined)[]])[] = [
+    ["Stripe (STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET)", [raw.STRIPE_SECRET_KEY, raw.STRIPE_PUBLISHABLE_KEY, raw.STRIPE_WEBHOOK_SECRET]],
+    ["Flutterwave (FLUTTERWAVE_SECRET_KEY, FLUTTERWAVE_WEBHOOK_HASH, FLUTTERWAVE_REDIRECT_URL)", [raw.FLUTTERWAVE_SECRET_KEY, raw.FLUTTERWAVE_WEBHOOK_HASH, raw.FLUTTERWAVE_REDIRECT_URL]],
+    ["Thunes (THUNES_BASE_URL, THUNES_API_KEY, THUNES_API_SECRET, THUNES_CALLBACK_URL)", [raw.THUNES_BASE_URL, raw.THUNES_API_KEY, raw.THUNES_API_SECRET, raw.THUNES_CALLBACK_URL]],
+  ];
+  for (const [name, values] of groups) {
+    const configured = values.filter((value) => value !== undefined).length;
+    if (configured !== 0 && configured !== values.length) problems.push(`${name} : paramètres incomplets`);
+  }
+  if (raw.STRIPE_SECRET_KEY !== undefined && raw.STRIPE_PUBLISHABLE_KEY !== undefined
+      && raw.STRIPE_SECRET_KEY.includes("_live_") !== raw.STRIPE_PUBLISHABLE_KEY.includes("_live_")) {
+    problems.push("les clés Stripe secrète et publiable doivent appartenir au même mode (live ou test)");
+  }
+  if (strict) {
+    for (const [name, url] of [["FLUTTERWAVE_REDIRECT_URL", raw.FLUTTERWAVE_REDIRECT_URL], ["THUNES_BASE_URL", raw.THUNES_BASE_URL], ["THUNES_CALLBACK_URL", raw.THUNES_CALLBACK_URL]] as const) {
+      if (url !== undefined && !url.startsWith("https:")) problems.push(`${name} doit être en https hors développement`);
+    }
+  }
+  if (raw.APP_ENV === "production") {
+    if (raw.STRIPE_SECRET_KEY === undefined && raw.FLUTTERWAVE_SECRET_KEY === undefined) {
+      problems.push("la production exige au moins un prestataire d'encaissement (Stripe ou Flutterwave)");
+    }
+    if (raw.FLUTTERWAVE_SECRET_KEY === undefined && raw.THUNES_API_KEY === undefined) {
+      problems.push("la production exige au moins un prestataire de paiement sortant (Flutterwave ou Thunes)");
+    }
+    if (raw.STRIPE_SECRET_KEY?.includes("_test_") === true) problems.push("la production exige une clé Stripe live");
+    if (raw.FLUTTERWAVE_SECRET_KEY?.startsWith("FLWSECK_TEST") === true) problems.push("la production exige une clé Flutterwave live");
   }
 
   const signingKey = raw.JWT_CUSTOMER_SIGNING_KEY;
@@ -545,6 +622,37 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       sessionTtlHours: raw.KYC_SESSION_TTL_HOURS,
       maxAttemptsPer30Days: raw.KYC_MAX_ATTEMPTS_PER_30_DAYS,
       syncIntervalMs: raw.KYC_SYNC_INTERVAL_MINUTES * 60_000,
+    },
+    payments: {
+      stripe:
+        raw.STRIPE_SECRET_KEY === undefined || raw.STRIPE_PUBLISHABLE_KEY === undefined || raw.STRIPE_WEBHOOK_SECRET === undefined
+          ? undefined
+          : {
+              secretKey: raw.STRIPE_SECRET_KEY,
+              publishableKey: raw.STRIPE_PUBLISHABLE_KEY,
+              webhookSecret: raw.STRIPE_WEBHOOK_SECRET,
+              apiVersion: raw.STRIPE_API_VERSION,
+            },
+      flutterwave:
+        raw.FLUTTERWAVE_SECRET_KEY === undefined || raw.FLUTTERWAVE_WEBHOOK_HASH === undefined || raw.FLUTTERWAVE_REDIRECT_URL === undefined
+          ? undefined
+          : { secretKey: raw.FLUTTERWAVE_SECRET_KEY, webhookHash: raw.FLUTTERWAVE_WEBHOOK_HASH, redirectUrl: raw.FLUTTERWAVE_REDIRECT_URL },
+      thunes:
+        raw.THUNES_BASE_URL === undefined || raw.THUNES_API_KEY === undefined || raw.THUNES_API_SECRET === undefined || raw.THUNES_CALLBACK_URL === undefined
+          ? undefined
+          : {
+              baseUrl: raw.THUNES_BASE_URL.replace(/\/+$/, ""),
+              apiKey: raw.THUNES_API_KEY,
+              apiSecret: raw.THUNES_API_SECRET,
+              callbackUrl: raw.THUNES_CALLBACK_URL,
+              settlementCurrency: raw.THUNES_SETTLEMENT_CURRENCY,
+              callbackAllowedIps: raw.THUNES_CALLBACK_ALLOWED_IPS ?? [],
+            },
+      fundingTtlMinutes: raw.PAYMENTS_FUNDING_TTL_MINUTES,
+      payoutMaxRoutes: raw.PAYOUT_MAX_ROUTES,
+      circuitFailureThreshold: raw.CIRCUIT_FAILURE_THRESHOLD,
+      circuitOpenSeconds: raw.CIRCUIT_OPEN_SECONDS,
+      syncIntervalMs: raw.PAYMENTS_SYNC_INTERVAL_MINUTES * 60_000,
     },
     ledger: {
       timestampAuthority:

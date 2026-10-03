@@ -287,3 +287,41 @@ export function minimalSourceForTarget(targetMinor: bigint, rate: string, source
   while (source > 1n && convertMinor(source - 1n, rate, sourceMinorUnits, targetMinorUnits) >= targetMinor) source -= 1n;
   return source;
 }
+
+/**
+ * Montant en unités mineures → décimal exact en unités principales
+ * (10199 EUR, 2 décimales → "101.99" ; 64611 XOF, 0 décimale → "64611").
+ */
+export function minorToDecimalString(amountMinor: bigint, minorUnits: number): string {
+  if (!Number.isInteger(minorUnits) || minorUnits < 0 || minorUnits > 4) throw new MoneyError("nombre de décimales invalide");
+  if (amountMinor < 0n) throw new MoneyError("montant négatif");
+  if (minorUnits === 0) return amountMinor.toString();
+  const divisor = pow10(minorUnits);
+  return `${(amountMinor / divisor).toString()}.${(amountMinor % divisor).toString().padStart(minorUnits, "0")}`;
+}
+
+/**
+ * Décimal en unités principales (texte exact, ex. lu sans perte dans un JSON)
+ * → unités mineures. Refuse toute précision supérieure à la devise : un
+ * montant prestataire « 101.995 EUR » n'est jamais arrondi silencieusement.
+ */
+export function decimalStringToMinor(value: string, minorUnits: number): bigint {
+  if (!Number.isInteger(minorUnits) || minorUnits < 0 || minorUnits > 4) throw new MoneyError("nombre de décimales invalide");
+  const match = /^(\d{1,18})(?:\.(\d+))?$/.exec(value.trim());
+  if (match === null) throw new MoneyError(`montant décimal invalide : ${value}`);
+  const integerPart = match[1] ?? "0";
+  const fraction = (match[2] ?? "").replace(/0+$/, "");
+  if (fraction.length > minorUnits) throw new MoneyError(`montant plus précis que la devise : ${value}`);
+  return BigInt(integerPart) * pow10(minorUnits) + BigInt(fraction.padEnd(minorUnits, "0") || "0");
+}
+
+/** Comme decimalStringToMinor, mais arrondi au supérieur (frais prestataire plus précis que la devise). */
+export function decimalStringToMinorCeil(value: string, minorUnits: number): bigint {
+  const match = /^(\d{1,18})(?:\.(\d+))?$/.exec(value.trim());
+  if (match === null) throw new MoneyError(`montant décimal invalide : ${value}`);
+  const fraction = (match[2] ?? "").replace(/0+$/, "");
+  if (fraction.length <= minorUnits) return decimalStringToMinor(value, minorUnits);
+  const kept = fraction.slice(0, minorUnits);
+  const truncated = decimalStringToMinor(`${match[1] ?? "0"}${kept.length > 0 ? `.${kept}` : ""}`, minorUnits);
+  return truncated + 1n;
+}

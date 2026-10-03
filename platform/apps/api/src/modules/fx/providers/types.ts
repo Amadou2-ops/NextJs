@@ -31,8 +31,4 @@ export class RateProviderError extends Error {
 }
 
 /** JSON.parse en conservant le texte source exact des nombres (Node ≥ 21). */
-export function parseJsonPreservingNumbers(text: string): unknown {
-  return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) =>
-    typeof value === "number" && context?.source !== undefined ? context.source : value,
-  ) as unknown;
-}
+export { parseJsonPreservingNumbers } from "../../../lib/json.js";

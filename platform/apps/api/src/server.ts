@@ -13,6 +13,7 @@ import { createAuthModule } from "./modules/auth/index.js";
 import { createFxModule } from "./modules/fx/index.js";
 import { createKycModule } from "./modules/kyc/index.js";
 import { createLedgerModule } from "./modules/ledger/index.js";
+import { createTransfersModule } from "./modules/transfers/index.js";
 import { WebhookInbox } from "./modules/webhooks/webhookInbox.js";
 
 /**
@@ -33,6 +34,10 @@ const FX_ESTIMATE_RATE_LIMIT = { keyPrefix: "fx-estimate-ip", points: 120, durat
 const FX_QUOTE_RATE_LIMIT = { keyPrefix: "fx-quote-subject", points: 60, durationSeconds: 600, blockDurationSeconds: 300 } as const;
 /** Ouverture de sessions KYC : 10 / heure par client (coût prestataire, anti-abus). */
 const KYC_START_RATE_LIMIT = { keyPrefix: "kyc-start-subject", points: 10, durationSeconds: 3600, blockDurationSeconds: 3600 } as const;
+/** Création de transferts : 30 / heure par client. */
+const TRANSFER_CREATE_RATE_LIMIT = { keyPrefix: "transfer-create-subject", points: 30, durationSeconds: 3600, blockDurationSeconds: 900 } as const;
+/** Ajout de bénéficiaires : 20 / jour par client (typologie de mule). */
+const RECIPIENT_CREATE_RATE_LIMIT = { keyPrefix: "recipient-create-subject", points: 20, durationSeconds: 86_400, blockDurationSeconds: 3600 } as const;
 /** Inscription / connexion : 10 tentatives / 15 min par numéro de téléphone. */
 const AUTH_PHONE_RATE_LIMIT = { keyPrefix: "auth-phone", points: 10, durationSeconds: 900, blockDurationSeconds: 900 } as const;
 
@@ -86,6 +91,7 @@ async function main(): Promise<void> {
     },
   });
 
+  const inbox = new WebhookInbox(pool, logger);
   const kycModule = createKycModule({
     config,
     pool,
@@ -95,8 +101,25 @@ async function main(): Promise<void> {
     deviceBinding: authModule.deviceBinding,
     encryptor: authModule.encryptor,
     indexer: authModule.indexer,
-    inbox: new WebhookInbox(pool, logger),
+    inbox,
     limiters: { startBySubject: createRedisRateLimiter(redis, KYC_START_RATE_LIMIT) },
+  });
+
+  const transfersModule = createTransfersModule({
+    config,
+    pool,
+    logger,
+    verifier,
+    sessions,
+    deviceBinding: authModule.deviceBinding,
+    mfa: authModule.mfa,
+    encryptor: authModule.encryptor,
+    indexer: authModule.indexer,
+    inbox,
+    limiters: {
+      transfersBySubject: createRedisRateLimiter(redis, TRANSFER_CREATE_RATE_LIMIT),
+      recipientsBySubject: createRedisRateLimiter(redis, RECIPIENT_CREATE_RATE_LIMIT),
+    },
   });
 
   const app = createApp({
@@ -112,6 +135,7 @@ async function main(): Promise<void> {
       application.use(ledgerModule.router);
       application.use(fxModule.router);
       application.use(kycModule.router);
+      application.use(transfersModule.router);
     },
   });
 
