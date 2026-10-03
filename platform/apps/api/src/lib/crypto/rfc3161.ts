@@ -98,7 +98,11 @@ export interface VerifiedTimestamp {
 }
 
 interface SignerInfo {
+  /** Nom de l'émetteur (DER exact) et numéro de série : identifient le certificat signataire. */
+  readonly issuerDer: Buffer;
   readonly serialHex: string;
+  /** AlgorithmIdentifier du condensat (DER exact), à retrouver dans SignedData.digestAlgorithms. */
+  readonly digestAlgorithmDer: Buffer;
   readonly digestAlgorithm: "sha256" | "sha384" | "sha512";
   readonly signedAttributes: DerNode;
   readonly signatureAlgorithm: string;
@@ -113,22 +117,51 @@ function normalizeSerial(hex: string): string {
   return hex.replace(/^(00)+(?=.)/, "").toUpperCase();
 }
 
+const DER_NULL = Buffer.from([TAG.NULL, 0x00]);
+
+/**
+ * AlgorithmIdentifier strict : OID suivi de paramètres absents ou NULL
+ * (RFC 5754 / RFC 4055) ; tout autre contenu est refusé plutôt qu'ignoré.
+ */
+function algorithmOid(node: DerNode | undefined, label: string): string {
+  const items = children(expectTag(node, TAG.SEQUENCE, label));
+  const parameters = items[1];
+  if (items.length > 2 || (parameters !== undefined && !Buffer.from(parameters.raw).equals(DER_NULL))) {
+    throw new TimestampError(`${label} : paramètres d'algorithme inattendus`);
+  }
+  return decodeOid(expectTag(items[0], TAG.OID, label));
+}
+
+/** Émetteur (DER exact) et numéro de série d'un certificat X.509 encodé. */
+function certificateIdentity(certificateNode: DerNode): { readonly issuerDer: Buffer; readonly serialHex: string } {
+  const tbs = children(expectTag(children(expectTag(certificateNode, TAG.SEQUENCE, "Certificate"))[0], TAG.SEQUENCE, "tbsCertificate"));
+  const offset = tbs[0]?.tag === TAG.CONTEXT_0 ? 1 : 0;
+  const serial = expectTag(tbs[offset], TAG.INTEGER, "Certificate.serialNumber");
+  const issuer = expectTag(tbs[offset + 2], TAG.SEQUENCE, "Certificate.issuer");
+  return { issuerDer: Buffer.from(issuer.raw), serialHex: normalizeSerial(serial.content.toString("hex")) };
+}
+
 function parseSignerInfo(node: DerNode): SignerInfo {
   const items = children(expectTag(node, TAG.SEQUENCE, "SignerInfo"));
   const [version, sid, digestAlgorithm, signedAttributes, signatureAlgorithm, signature] = items;
   if (decodeInteger(expectTag(version, TAG.INTEGER, "SignerInfo.version")) !== 1n) {
     throw new TimestampError("seuls les SignerInfo identifiés par émetteur et numéro de série sont acceptés");
   }
+  if (items.length !== 6) throw new TimestampError("SignerInfo : attributs non signés ou champs inattendus");
   const sidItems = children(expectTag(sid, TAG.SEQUENCE, "IssuerAndSerialNumber"));
+  if (sidItems.length !== 2) throw new TimestampError("IssuerAndSerialNumber malformé");
+  const issuer = expectTag(sidItems[0], TAG.SEQUENCE, "émetteur du signataire");
   const serial = expectTag(sidItems[1], TAG.INTEGER, "numéro de série du signataire");
-  const digestOid = decodeOid(expectTag(children(expectTag(digestAlgorithm, TAG.SEQUENCE, "digestAlgorithm"))[0], TAG.OID, "digestAlgorithm"));
+  const digestOid = algorithmOid(digestAlgorithm, "digestAlgorithm");
   const digest = DIGESTS[digestOid];
   if (digest === undefined) throw new TimestampError(`algorithme de condensat non supporté : ${digestOid}`);
   return {
+    issuerDer: Buffer.from(issuer.raw),
     serialHex: normalizeSerial(serial.content.toString("hex")),
+    digestAlgorithmDer: Buffer.from(expectTag(digestAlgorithm, TAG.SEQUENCE, "digestAlgorithm").raw),
     digestAlgorithm: digest,
     signedAttributes: expectTag(signedAttributes, TAG.CONTEXT_0, "signedAttrs"),
-    signatureAlgorithm: decodeOid(expectTag(children(expectTag(signatureAlgorithm, TAG.SEQUENCE, "signatureAlgorithm"))[0], TAG.OID, "signatureAlgorithm")),
+    signatureAlgorithm: algorithmOid(signatureAlgorithm, "signatureAlgorithm"),
     signature: expectTag(signature, TAG.OCTET_STRING, "signature").content,
   };
 }
@@ -193,6 +226,11 @@ export function verifyTimestampResponse(
       throw new TimestampError("le jeton n'est pas un SignedData CMS");
     }
     const signedData = children(expectTag(children(expectTag(contentInfo[1], TAG.CONTEXT_0, "content"))[0], TAG.SEQUENCE, "SignedData"));
+    // RFC 5652 §5.1 : version 3 lorsque le contenu encapsulé n'est pas id-data.
+    if (decodeInteger(expectTag(signedData[0], TAG.INTEGER, "SignedData.version")) !== 3n) {
+      throw new TimestampError("version de SignedData inattendue");
+    }
+    const digestAlgorithms = children(expectTag(signedData[1], TAG.SET, "SignedData.digestAlgorithms"));
     const encapsulated = children(expectTag(signedData[2], TAG.SEQUENCE, "encapContentInfo"));
     if (decodeOid(expectTag(encapsulated[0], TAG.OID, "eContentType")) !== OID.TST_INFO) {
       throw new TimestampError("le contenu signé n'est pas un TSTInfo");
@@ -203,7 +241,7 @@ export function verifyTimestampResponse(
     const tstInfo = children(expectTag(parseDer(tstInfoDer), TAG.SEQUENCE, "TSTInfo"));
     const policy = decodeOid(expectTag(tstInfo[1], TAG.OID, "policy"));
     const imprint = children(expectTag(tstInfo[2], TAG.SEQUENCE, "messageImprint"));
-    const imprintAlgorithm = decodeOid(expectTag(children(expectTag(imprint[0], TAG.SEQUENCE, "hashAlgorithm"))[0], TAG.OID, "hashAlgorithm"));
+    const imprintAlgorithm = algorithmOid(imprint[0], "hashAlgorithm");
     const imprintValue = expectTag(imprint[1], TAG.OCTET_STRING, "hashedMessage").content;
     if (imprintAlgorithm !== OID.SHA256 || !imprintValue.equals(expected.sha256Digest)) {
       throw new TimestampError("le jeton porte une autre empreinte que celle demandée");
@@ -218,13 +256,21 @@ export function verifyTimestampResponse(
     // --- Signature CMS ----------------------------------------------------
     const certificateSet = find(signedData.slice(3), TAG.CONTEXT_0);
     if (certificateSet === undefined) throw new TimestampError("le jeton ne contient pas le certificat de l'autorité");
-    const certificates = children(certificateSet).map((node) => new X509Certificate(node.raw));
+    const certificateNodes = children(certificateSet);
     const signerInfos = children(expectTag(signedData.at(-1), TAG.SET, "signerInfos"));
     const [signerInfo] = signerInfos;
     if (signerInfos.length !== 1 || signerInfo === undefined) throw new TimestampError("un seul signataire attendu");
     const signer = parseSignerInfo(signerInfo);
-    const signerCertificate = certificates.find((certificate) => normalizeSerial(certificate.serialNumber) === signer.serialHex);
-    if (signerCertificate === undefined) throw new TimestampError("certificat du signataire introuvable dans le jeton");
+    if (!digestAlgorithms.some((algorithm) => Buffer.from(algorithm.raw).equals(signer.digestAlgorithmDer))) {
+      throw new TimestampError("algorithme de condensat du signataire absent de SignedData.digestAlgorithms");
+    }
+    // Le certificat signataire est celui que désigne exactement le SignerInfo (émetteur ET numéro de série).
+    const signerNode = certificateNodes.find((node) => {
+      const identity = certificateIdentity(node);
+      return identity.serialHex === signer.serialHex && identity.issuerDer.equals(signer.issuerDer);
+    });
+    if (signerNode === undefined) throw new TimestampError("certificat du signataire introuvable dans le jeton");
+    const signerCertificate = new X509Certificate(signerNode.raw);
 
     const contentType = attributeValue(signer.signedAttributes, OID.CONTENT_TYPE);
     if (contentType === undefined || decodeOid(contentType) !== OID.TST_INFO) throw new TimestampError("attribut contentType invalide");

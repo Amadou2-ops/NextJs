@@ -86,24 +86,26 @@ describe("RFC 3161", () => {
     expect(() => verifyTimestampResponse(response, { sha256Digest: digest, nonce: request.nonce }, [rogue.rootCertificate])).toThrow(TimestampError);
   });
 
-  it("détecte toute altération du jeton", () => {
+  it("détecte toute altération du jeton, octet par octet", () => {
     const request = buildTimestampRequest(digest);
     const response = tsa.reply(request.der);
-    let rejected = 0;
-    const positions = Array.from({ length: 40 }, () => 20 + Math.floor(Math.random() * (response.length - 20)));
-    for (const position of positions) {
+    const statusValueOffset = 8;
+    expect(response[statusValueOffset]).toBe(0);
+    const accepted: number[] = [];
+    for (let position = 0; position < response.length; position += 1) {
       const tampered = Buffer.from(response);
       tampered[position] = (tampered[position] ?? 0) ^ 0x01;
       try {
         verifyTimestampResponse(tampered, { sha256Digest: digest, nonce: request.nonce }, [tsa.rootCertificate]);
+        accepted.push(position);
       } catch (error: unknown) {
         expect(error).toBeInstanceOf(TimestampError);
-        rejected += 1;
       }
     }
-    // Quelques octets (ex. champs non signés hors du jeton) peuvent ne pas
-    // invalider la réponse ; l'immense majorité doit l'être.
-    expect(rejected).toBeGreaterThanOrEqual(36);
+    // Seule altération sans effet : PKIStatus 0 (granted) ↔ 1 (grantedWithMods),
+    // deux statuts d'acceptation selon la RFC 3161. Tout autre octet — y compris
+    // l'émetteur du signataire, les paramètres d'algorithmes et la version CMS — invalide le jeton.
+    expect(accepted).toEqual([statusValueOffset]);
   });
 
   it("refuse une réponse de statut « rejection »", () => {
