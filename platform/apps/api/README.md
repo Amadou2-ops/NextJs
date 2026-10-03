@@ -71,6 +71,31 @@ Garanties principales :
 L'authentification du personnel (WebAuthn matériel obligatoire) arrive avec
 l'API d'administration (phase 9).
 
+## Registre (`src/modules/ledger`, `src/jobs`)
+
+- `LedgerService.post()` : seule porte d'entrée des modules métier vers le
+  registre. Les écritures sont typées (`Money`), vérifiées localement
+  (équilibre par devise, pas de débit et crédit sur le même compte), puis
+  transmises à `ledger.post_journal()`. Les montants voyagent en `bigint[]`
+  PostgreSQL et ne deviennent jamais des nombres flottants.
+- Routes client : `GET/POST /v1/wallets`, `GET /v1/wallets/{devise}/statement`
+  (pagination par curseur). Aucune route n'écrit d'écriture arbitraire.
+- Routes personnel (`ledger:read`) : comptes, écritures, journaux avec leurs
+  empreintes, balance générale, état d'intégrité.
+- Processus `worker` (`pnpm dev:worker`) :
+  - **rapprochement** horaire : chaîne d'empreintes (incrémentale, complète au
+    moins toutes les 24 h), soldes, balance générale, chaîne d'audit. Toute
+    anomalie est historisée et déclenche l'alerte `ledger.integrity_breach`
+    (outbox) ;
+  - **ancrage RFC 3161** toutes les 6 h du dernier état vérifié sain auprès
+    d'une autorité d'horodatage ; le jeton est entièrement vérifié (empreinte,
+    nonce, signature CMS, usage timeStamping, chaîne de confiance) puis
+    conservé. Vérification indépendante par un auditeur :
+    `openssl ts -verify -in jeton.der -token_in -digest <empreinte> -CAfile ca.pem` ;
+  - **purge** des clés d'idempotence et défis expirés.
+  Chaque tâche est protégée par un verrou consultatif PostgreSQL : plusieurs
+  instances du worker peuvent tourner sans exécution concurrente.
+
 ## Commandes
 
 ```bash
@@ -78,5 +103,6 @@ cp .env.example .env     # puis remplir les clés locales
 pnpm dev                 # tsx watch
 pnpm typecheck && pnpm lint
 TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/transfertplus_api_test pnpm test
-pnpm build && pnpm start
+pnpm build && pnpm start          # API
+pnpm start:worker                  # tâches de fond
 ```

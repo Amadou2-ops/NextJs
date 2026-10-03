@@ -31,6 +31,8 @@ du dépôt suit le `AGENTS.md` racine).
   par `toAppError`). Ajouter un code d'erreur = l'ajouter aussi au contrat OpenAPI
   (un test vérifie la concordance).
 - Routes mobiles sensibles : ajouter `requireDeviceSignature` après `authenticate`.
+- Mouvements comptables : uniquement via `LedgerService.post()` / `reverse()` dans une
+  `withTransaction`, avec une clé d'idempotence déterministe dérivée de l'opération.
 - Toute nouvelle route doit figurer dans `packages/contracts/openapi.yaml`
   (un test vérifie la couverture des routes du module d'authentification).
 - Avant de livrer : `pnpm --filter @transfertplus/api typecheck`, `lint`, `test`

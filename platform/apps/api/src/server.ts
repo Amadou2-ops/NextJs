@@ -1,6 +1,8 @@
 import type { Server } from "node:http";
 
 import { createApp } from "./app.js";
+import { AccessTokenVerifier } from "./auth/accessToken.js";
+import { PostgresPermissionChecker } from "./auth/permissions.js";
 import { PostgresSessionValidator } from "./auth/sessions.js";
 import { ConfigurationError, loadConfig } from "./config/env.js";
 import { createLogger } from "./config/logger.js";
@@ -8,6 +10,7 @@ import { checkDatabase, createDatabasePool } from "./db/pool.js";
 import { createRedisRateLimiter } from "./middlewares/rateLimit.js";
 import { checkRedis, createRedisClient } from "./lib/redis.js";
 import { createAuthModule } from "./modules/auth/index.js";
+import { createLedgerModule } from "./modules/ledger/index.js";
 
 /**
  * Point d'entrée du processus : construit les ressources, démarre le serveur
@@ -42,15 +45,24 @@ async function main(): Promise<void> {
   await redis.connect();
   await checkDatabase(pool);
 
+  const sessions = new PostgresSessionValidator(pool);
   const authModule = createAuthModule({
     config,
     pool,
     logger,
-    sessions: new PostgresSessionValidator(pool),
+    sessions,
     limiters: {
       publicByIp: createRedisRateLimiter(redis, AUTH_PUBLIC_RATE_LIMIT),
       byPhone: createRedisRateLimiter(redis, AUTH_PHONE_RATE_LIMIT),
     },
+  });
+
+  const ledgerModule = createLedgerModule({
+    pool,
+    verifier: new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks),
+    sessions,
+    permissions: new PostgresPermissionChecker(pool),
+    deviceBinding: authModule.deviceBinding,
   });
 
   const app = createApp({
@@ -63,6 +75,7 @@ async function main(): Promise<void> {
     globalRateLimiter: createRedisRateLimiter(redis, GLOBAL_RATE_LIMIT),
     mountRoutes: (application) => {
       application.use(authModule.router);
+      application.use(ledgerModule.router);
     },
   });
 

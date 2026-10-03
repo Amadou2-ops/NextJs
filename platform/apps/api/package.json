@@ -34,7 +34,8 @@
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.0",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "yaml": "^2.9.1"
   },
   "description": "API Node.js (Express, TypeScript) : architecture en couches, sécurité, registre comptable.",
   "scripts": {
@@ -43,6 +44,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dev:worker": "tsx watch src/worker.ts",
+    "start:worker": "node dist/worker.js"
   }
 }

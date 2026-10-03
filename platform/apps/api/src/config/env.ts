@@ -177,6 +177,16 @@ const rawEnvironmentSchema = z.object({
 
   // Contrôle des mots de passe compromis (Have I Been Pwned, k-anonymat).
   PASSWORD_BREACH_CHECK: z.enum(["enabled", "disabled"]).default("enabled"),
+
+  // Ancrage externe du registre : autorité d'horodatage RFC 3161 et
+  // certificats de confiance (PEM : racine et/ou certificat de la TSA).
+  TSA_URL: z.url({ protocol: /^https?$/ }).optional(),
+  TSA_TRUSTED_CERTS_PATH: z.string().min(1).optional(),
+  TSA_ANCHOR_TARGET: z.string().regex(/^[a-z0-9_-]{2,50}$/).default("rfc3161-tsa"),
+
+  // Périodicité des tâches de fond (worker).
+  RECONCILIATION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+  ANCHOR_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
 });
 
 type RawEnvironment = z.infer<typeof rawEnvironmentSchema>;
@@ -235,6 +245,11 @@ export interface AppConfig {
       | undefined;
     readonly passwordBreachCheck: boolean;
   };
+  readonly ledger: {
+    readonly timestampAuthority: { readonly url: string; readonly trustedCertsPem: string; readonly target: string } | undefined;
+    readonly reconciliationIntervalMs: number;
+    readonly anchorIntervalMs: number;
+  };
 }
 
 export class ConfigurationError extends Error {
@@ -285,6 +300,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     for (const origin of raw.WEBAUTHN_ORIGINS) {
       if (origin.protocol !== "https:") problems.push(`origine WebAuthn non https interdite : ${origin.origin}`);
     }
+  }
+
+  if ((raw.TSA_URL === undefined) !== (raw.TSA_TRUSTED_CERTS_PATH === undefined)) {
+    problems.push("TSA_URL et TSA_TRUSTED_CERTS_PATH vont de pair");
+  }
+  if (raw.APP_ENV === "production" && raw.TSA_URL === undefined) {
+    problems.push("la production exige un ancrage externe du registre (TSA_URL, TSA_TRUSTED_CERTS_PATH)");
   }
 
   const signingKey = raw.JWT_CUSTOMER_SIGNING_KEY;
@@ -379,6 +401,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
               serviceAccount: raw.GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT,
             },
       passwordBreachCheck: raw.PASSWORD_BREACH_CHECK === "enabled",
+    },
+    ledger: {
+      timestampAuthority:
+        raw.TSA_URL === undefined || raw.TSA_TRUSTED_CERTS_PATH === undefined
+          ? undefined
+          : { url: raw.TSA_URL, trustedCertsPem: readFileSync(raw.TSA_TRUSTED_CERTS_PATH, "utf8"), target: raw.TSA_ANCHOR_TARGET },
+      reconciliationIntervalMs: raw.RECONCILIATION_INTERVAL_MINUTES * 60_000,
+      anchorIntervalMs: raw.ANCHOR_INTERVAL_MINUTES * 60_000,
     },
   };
 }

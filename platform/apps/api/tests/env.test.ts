@@ -28,6 +28,8 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     TWILIO_MESSAGING_SERVICE_SID: `MG${"b".repeat(32)}`,
     WEBAUTHN_RP_ID: "transfertplus.com",
     WEBAUTHN_ORIGINS: "https://app.transfertplus.com",
+    TSA_URL: "https://tsa.example.com/rfc3161",
+    TSA_TRUSTED_CERTS_PATH: "/etc/hosts",
     ...overrides,
   };
 }
@@ -52,6 +54,7 @@ describe("configuration", () => {
     ["contrôle des fuites désactivé", { PASSWORD_BREACH_CHECK: "disabled" }],
     ["App Attest de développement", { APPLE_APP_ATTEST_APP_IDS: "ABCDE12345.com.transfertplus.app", APPLE_APP_ATTEST_ALLOW_DEVELOPMENT: "true" }],
     ["origine WebAuthn en http", { WEBAUTHN_ORIGINS: "http://app.transfertplus.com" }],
+    ["registre sans ancrage externe", { TSA_URL: "", TSA_TRUSTED_CERTS_PATH: "" }],
   ])("refuse en production : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });
@@ -69,6 +72,7 @@ describe("configuration", () => {
     ["Twilio incomplet", { TWILIO_AUTH_TOKEN: "" }],
     ["origine WebAuthn hors domaine", { WEBAUTHN_ORIGINS: "https://evil.example" }],
     ["Play Integrity incomplet", { ANDROID_PACKAGE_NAME: "com.transfertplus.app" }],
+    ["TSA sans certificats", { TSA_TRUSTED_CERTS_PATH: "" }],
   ])("refuse dans tous les environnements : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });
