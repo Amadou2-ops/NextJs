@@ -7,6 +7,8 @@ declare global {
     interface Request {
       /** Identifiant de corrélation (en-tête X-Request-Id). */
       requestId: string;
+      /** Corps brut reçu (signatures d'appareil et de webhooks). */
+      rawBody?: Buffer;
       /** Identité authentifiée (après le middleware authenticate). */
       auth?: AuthContext;
       /** Données validées par le middleware validate. */

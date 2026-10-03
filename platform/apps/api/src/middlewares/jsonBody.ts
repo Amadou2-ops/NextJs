@@ -23,5 +23,17 @@ export function jsonBody(limitBytes = 64 * 1024): RequestHandler[] {
     }
     next();
   };
-  return [requireJson, express.json({ limit: limitBytes, strict: true, type: "application/json" })];
+  return [
+    requireJson,
+    express.json({
+      limit: limitBytes,
+      strict: true,
+      type: "application/json",
+      // Conservation des octets exacts reçus : les signatures portent sur le
+      // corps brut, jamais sur un JSON réanalysé.
+      verify: (req, _res, buffer) => {
+        (req as Request).rawBody = Buffer.from(buffer);
+      },
+    }),
+  ];
 }

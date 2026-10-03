@@ -26,6 +26,8 @@ security:
   - webSession: []
 tags:
   - name: system
+  - name: auth
+    description: Inscription, connexion, sessions, appareils, double authentification
 paths:
   /health:
     get:
@@ -63,6 +65,381 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Jwks"
+  /auth/device-challenges:
+    post:
+      tags: [auth]
+      operationId: createDeviceChallenge
+      summary: Défi serveur à intégrer à l'attestation d'un nouvel appareil mobile
+      security: []
+      responses:
+        "201":
+          description: Défi à usage unique (5 minutes)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, challenge, expiresAt]
+                properties:
+                  challengeId: { type: string, format: uuid }
+                  challenge: { type: string, description: "32 octets en base64url" }
+                  expiresAt: { type: string, format: date-time }
+        "429":
+          $ref: "#/components/responses/Problem"
+  /auth/registration/start:
+    post:
+      tags: [auth]
+      operationId: startRegistration
+      summary: Envoie un code SMS au numéro (réponse identique si le numéro est déjà inscrit)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone: { type: string, example: "+221 77 123 45 67" }
+                countryHint: { $ref: "#/components/schemas/CountryCode" }
+                locale: { type: string, default: fr }
+      responses:
+        "202":
+          description: Code envoyé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationChallenge"
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /auth/registration/complete:
+    post:
+      tags: [auth]
+      operationId: completeRegistration
+      summary: Vérifie le code SMS, crée le compte et ouvre une session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, code, phone, password, countryOfResidence, client]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { $ref: "#/components/schemas/OtpCode" }
+                phone: { type: string }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                countryOfResidence: { $ref: "#/components/schemas/CountryCode" }
+                preferredLocale: { type: string, default: fr }
+                client: { $ref: "#/components/schemas/ClientDescriptor" }
+      responses:
+        "201":
+          description: Compte créé, session ouverte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: startLogin
+      summary: Vérifie le mot de passe ; connexion directe sur appareil de confiance signé, sinon second facteur
+      description: |
+        Appareil mobile déjà enregistré (`client.deviceId`) : la requête DOIT
+        porter les en-têtes de signature d'appareil.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceSignature"
+        - $ref: "#/components/parameters/DeviceSignatureTimestamp"
+        - $ref: "#/components/parameters/DeviceCounter"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone, password, client]
+              properties:
+                phone: { type: string }
+                password: { type: string }
+                client: { $ref: "#/components/schemas/ClientDescriptor" }
+      responses:
+        "200":
+          description: Session ouverte ou second facteur requis
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AuthenticatedSession"
+                  - $ref: "#/components/schemas/SecondFactorRequired"
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+  /auth/login/verify:
+    post:
+      tags: [auth]
+      operationId: completeLogin
+      summary: Valide le second facteur (code SMS ou TOTP)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [loginChallengeId, code]
+              properties:
+                loginChallengeId: { type: string, format: uuid }
+                code: { $ref: "#/components/schemas/OtpCode" }
+      responses:
+        "200":
+          description: Session ouverte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+  /auth/token/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Échange un jeton de renouvellement (usage unique, rotation)
+      description: |
+        Session mobile : la requête DOIT être signée par l'appareil. La
+        réutilisation d'un jeton déjà échangé révoque toute la session.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceSignature"
+        - $ref: "#/components/parameters/DeviceSignatureTimestamp"
+        - $ref: "#/components/parameters/DeviceCounter"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, pattern: "^rt_[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200":
+          description: Nouveaux jetons
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Révoque la session courante
+      responses:
+        "204": { description: Session révoquée }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/sessions:
+    get:
+      tags: [auth]
+      operationId: listSessions
+      summary: Sessions actives du client
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SessionSummary" }
+  /auth/sessions/{sessionId}:
+    delete:
+      tags: [auth]
+      operationId: revokeSession
+      summary: Révoque une session (niveau d'assurance 2 requis)
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Session révoquée }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /auth/sessions/revoke-others:
+    post:
+      tags: [auth]
+      operationId: revokeOtherSessions
+      summary: Révoque toutes les autres sessions
+      responses:
+        "200":
+          description: Nombre de sessions révoquées
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer, minimum: 0 }
+  /auth/devices:
+    get:
+      tags: [auth]
+      operationId: listDevices
+      summary: Appareils de confiance du client
+      responses:
+        "200":
+          description: Appareils
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeviceSummary" }
+  /auth/devices/{deviceId}:
+    delete:
+      tags: [auth]
+      operationId: revokeDevice
+      summary: Révoque un appareil et toutes ses sessions
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Appareil révoqué }
+        "404": { $ref: "#/components/responses/Problem" }
+  /auth/mfa/totp/setup:
+    post:
+      tags: [auth]
+      operationId: startTotpEnrollment
+      summary: Génère un secret TOTP (actif après confirmation)
+      responses:
+        "201":
+          description: Secret à scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauthUri]
+                properties:
+                  secret: { type: string, description: "Base32" }
+                  otpauthUri: { type: string }
+        "409": { $ref: "#/components/responses/Problem" }
+  /auth/mfa/totp/confirm:
+    post:
+      tags: [auth]
+      operationId: confirmTotpEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TotpCodeRequest" }
+      responses:
+        "204": { description: Double authentification activée }
+        "422": { $ref: "#/components/responses/Problem" }
+  /auth/mfa/totp/disable:
+    post:
+      tags: [auth]
+      operationId: disableTotp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TotpCodeRequest" }
+      responses:
+        "204": { description: Double authentification désactivée }
+        "422": { $ref: "#/components/responses/Problem" }
+  /auth/passkeys/registration/options:
+    post:
+      tags: [auth]
+      operationId: passkeyRegistrationOptions
+      summary: Options WebAuthn d'enregistrement (session web, niveau 2)
+      responses:
+        "201":
+          description: Options PublicKeyCredentialCreationOptionsJSON
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, options]
+                properties:
+                  challengeId: { type: string, format: uuid }
+                  options: { type: object }
+  /auth/passkeys/registration/verify:
+    post:
+      tags: [auth]
+      operationId: passkeyRegistrationVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, response]
+              properties:
+                challengeId: { type: string, format: uuid }
+                nickname: { type: string, maxLength: 60 }
+                response: { type: object, description: "RegistrationResponseJSON" }
+      responses:
+        "201":
+          description: Passkey enregistrée
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentialId]
+                properties:
+                  credentialId: { type: string }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/passkeys/authentication/options:
+    post:
+      tags: [auth]
+      operationId: passkeyAuthenticationOptions
+      security: []
+      responses:
+        "201":
+          description: Options PublicKeyCredentialRequestOptionsJSON
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, options]
+                properties:
+                  challengeId: { type: string, format: uuid }
+                  options: { type: object }
+  /auth/passkeys/authentication/verify:
+    post:
+      tags: [auth]
+      operationId: passkeyAuthenticationVerify
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, response]
+              properties:
+                challengeId: { type: string, format: uuid }
+                response: { type: object, description: "AuthenticationResponseJSON" }
+      responses:
+        "200":
+          description: Session web ouverte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     mobileBearer:
@@ -86,6 +463,32 @@ components:
       name: __Host-admin-sid
       description: Session du personnel (WebAuthn obligatoire, `aud=admin`).
   parameters:
+    DeviceId:
+      name: X-Device-Id
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+    DeviceSignature:
+      name: X-Device-Signature
+      in: header
+      required: false
+      description: |
+        Signature base64url (ES256 au format DER, ou EdDSA) du message UTF-8 :
+        "TPv1\n" + MÉTHODE + "\n" + chemin?requête + "\n" + horodatage + "\n"
+        + compteur + "\n" + base64url(SHA-256(corps brut)).
+      schema: { type: string }
+    DeviceSignatureTimestamp:
+      name: X-Device-Signature-Timestamp
+      in: header
+      required: false
+      description: Horodatage Unix en millisecondes (tolérance ±60 s).
+      schema: { type: string, pattern: "^[0-9]{13}$" }
+    DeviceCounter:
+      name: X-Device-Counter
+      in: header
+      required: false
+      description: Compteur strictement croissant par appareil (anti-rejeu).
+      schema: { type: string, pattern: "^[1-9][0-9]{0,15}$" }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -141,6 +544,12 @@ components:
         - QUOTE_EXPIRED_OR_CONSUMED
         - INVALID_PAYMENT_TRANSITION
         - FOUR_EYES_VIOLATION
+        - INVALID_CREDENTIALS
+        - INVALID_VERIFICATION_CODE
+        - VERIFICATION_EXPIRED
+        - ACCOUNT_LOCKED
+        - DEVICE_ATTESTATION_FAILED
+        - DEVICE_SIGNATURE_INVALID
         - VALIDATION_FAILED
         - UNAUTHENTICATED
         - FORBIDDEN
@@ -184,6 +593,111 @@ components:
                 type: string
               message:
                 type: string
+    OtpCode:
+      type: string
+      pattern: "^[0-9]{6}$"
+    VerificationChallenge:
+      type: object
+      required: [challengeId, expiresAt]
+      properties:
+        challengeId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+    TotpCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: { $ref: "#/components/schemas/OtpCode" }
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [challengeId, platform, name, appVersion, osVersion, publicKey, publicKeyAlgorithm, attestation]
+      properties:
+        challengeId: { type: string, format: uuid }
+        platform: { type: string, enum: [ios, android] }
+        name: { type: string, maxLength: 80 }
+        appVersion: { type: string }
+        osVersion: { type: string }
+        publicKey: { type: string, description: "Clé publique SPKI DER en base64 (P-256 pour ES256, Ed25519 pour EdDSA)" }
+        publicKeyAlgorithm: { type: string, enum: [ES256, EdDSA] }
+        attestation:
+          description: |
+            clientDataHash = SHA-256(défi ‖ SHA-256(clé publique SPKI)). iOS :
+            attestKey(keyId, clientDataHash). Android : requestHash =
+            base64url(clientDataHash).
+          oneOf:
+            - type: object
+              required: [type, keyId, attestationObject]
+              properties:
+                type: { type: string, enum: [app_attest] }
+                keyId: { type: string }
+                attestationObject: { type: string }
+            - type: object
+              required: [type, integrityToken]
+              properties:
+                type: { type: string, enum: [play_integrity] }
+                integrityToken: { type: string }
+    ClientDescriptor:
+      oneOf:
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [web] }
+        - type: object
+          required: [type, device]
+          properties:
+            type: { type: string, enum: [mobile] }
+            device: { $ref: "#/components/schemas/DeviceRegistration" }
+        - type: object
+          required: [type, deviceId]
+          properties:
+            type: { type: string, enum: [mobile] }
+            deviceId: { type: string, format: uuid }
+    AuthenticatedSession:
+      type: object
+      required: [status, userId, sessionId, deviceId, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt]
+      properties:
+        status: { type: string, enum: [authenticated] }
+        userId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        deviceId: { type: [string, "null"], format: uuid }
+        accessToken: { type: string, description: "JWT at+jwt EdDSA, 10 minutes" }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string, description: "Usage unique ; à conserver dans le Keychain/Keystore (mobile) ou côté BFF (web)" }
+        refreshTokenExpiresAt: { type: string, format: date-time }
+    SecondFactorRequired:
+      type: object
+      required: [status, loginChallengeId, method, expiresAt]
+      properties:
+        status: { type: string, enum: [second_factor_required] }
+        loginChallengeId: { type: string, format: uuid }
+        method: { type: string, enum: [sms_otp, totp] }
+        expiresAt: { type: string, format: date-time }
+    SessionSummary:
+      type: object
+      required: [id, audience, createdAt, lastUsedAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        audience: { type: string, enum: [mobile, web] }
+        deviceId: { type: [string, "null"] }
+        deviceName: { type: [string, "null"] }
+        ipAddress: { type: [string, "null"] }
+        userAgent: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time }
+        current: { type: boolean }
+    DeviceSummary:
+      type: object
+      required: [id, platform, name, createdAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        platform: { type: string, enum: [ios, android] }
+        name: { type: string }
+        appVersion: { type: [string, "null"] }
+        osVersion: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: [string, "null"], format: date-time }
+        current: { type: boolean }
     Jwks:
       type: object
       required: [keys]

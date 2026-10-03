@@ -8,7 +8,7 @@ import type { Logger } from "pino";
 
 import { createApp } from "../../src/app.js";
 import type { AppDependencies } from "../../src/app.js";
-import type { AppConfig, PublicJwk } from "../../src/config/env.js";
+import type { AppConfig, PrivateJwk, PublicJwk } from "../../src/config/env.js";
 import { loadConfig } from "../../src/config/env.js";
 import { createDatabasePool } from "../../src/db/pool.js";
 import type { DatabasePool } from "../../src/db/pool.js";
@@ -22,16 +22,19 @@ export interface SigningKey {
   readonly kid: string;
   readonly privateKey: JoseCryptoKey;
   readonly publicJwk: PublicJwk;
+  readonly privateJwk: PrivateJwk;
 }
 
 export async function createSigningKey(kid: string): Promise<SigningKey> {
   const { privateKey, publicKey } = await generateKeyPair("EdDSA", { crv: "Ed25519", extractable: true });
   const jwk = await exportJWK(publicKey);
-  if (jwk.x === undefined) throw new Error("clé publique sans composante x");
+  const privateJwk = await exportJWK(privateKey);
+  if (jwk.x === undefined || privateJwk.d === undefined) throw new Error("clé Ed25519 incomplète");
   return {
     kid,
     privateKey,
     publicJwk: { kty: "OKP", crv: "Ed25519", x: jwk.x, kid, alg: "EdDSA", use: "sig" },
+    privateJwk: { kty: "OKP", crv: "Ed25519", x: jwk.x, d: privateJwk.d, kid, alg: "EdDSA", use: "sig" },
   };
 }
 
@@ -67,6 +70,12 @@ export function buildTestConfig(keys: TestKeys, overrides: Record<string, string
     JWT_ADMIN_PUBLIC_JWKS: JSON.stringify({ keys: [keys.admin.publicJwk] }),
     PII_KEYRING: JSON.stringify({ activeKeyId: "pii-2026-01", keys: { "pii-2026-01": randomBytes(32).toString("base64") } }),
     BLIND_INDEX_KEY: randomBytes(32).toString("base64"),
+    JWT_CUSTOMER_SIGNING_KEY: JSON.stringify(keys.customer.privateJwk),
+    OTP_HMAC_KEY: randomBytes(32).toString("base64"),
+    SMS_PROVIDER: "log",
+    WEBAUTHN_RP_ID: "transfertplus.test",
+    WEBAUTHN_ORIGINS: WEB_ORIGIN,
+    PASSWORD_BREACH_CHECK: "disabled",
     ...overrides,
   });
 }

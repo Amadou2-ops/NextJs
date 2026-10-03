@@ -49,6 +49,33 @@ const publicJwksSchema = z
     message: "identifiants de clé (kid) dupliqués",
   });
 
+const okpPrivateJwkSchema = z
+  .object({
+    kty: z.literal("OKP"),
+    crv: z.literal("Ed25519"),
+    x: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    d: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    kid: z.string().min(8).max(128),
+    alg: z.literal("EdDSA"),
+    use: z.literal("sig"),
+  })
+  .strict();
+
+export type PrivateJwk = z.infer<typeof okpPrivateJwkSchema>;
+
+const serviceAccountSchema = z.object({
+  type: z.literal("service_account"),
+  client_email: z.email(),
+  private_key: z.string().startsWith("-----BEGIN PRIVATE KEY-----"),
+  token_uri: z.url({ protocol: /^https$/ }).default("https://oauth2.googleapis.com/token"),
+});
+
+export type GoogleServiceAccount = z.infer<typeof serviceAccountSchema>;
+
+const csv = z
+  .string()
+  .transform((value) => value.split(",").map((item) => item.trim()).filter((item) => item.length > 0));
+
 export type PublicJwk = z.infer<typeof okpPublicJwkSchema>;
 export type PublicJwks = z.infer<typeof publicJwksSchema>;
 
@@ -122,6 +149,34 @@ const rawEnvironmentSchema = z.object({
   // Clé HMAC des index aveugles. Distincte des clés de chiffrement ; ne
   // tourne jamais sans réindexation complète.
   BLIND_INDEX_KEY: base64Key32,
+
+  // Clé PRIVÉE active de signature des jetons clients (JWK Ed25519). Sa partie
+  // publique doit figurer dans JWT_CUSTOMER_PUBLIC_JWKS (même kid, même x).
+  JWT_CUSTOMER_SIGNING_KEY: jsonFromString(okpPrivateJwkSchema),
+  // Clé HMAC des codes à usage unique (SMS).
+  OTP_HMAC_KEY: base64Key32,
+
+  SMS_PROVIDER: z.enum(["twilio", "log"]).default("twilio"),
+  TWILIO_ACCOUNT_SID: z.string().regex(/^AC[0-9a-f]{32}$/).optional(),
+  TWILIO_AUTH_TOKEN: z.string().min(32).optional(),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().regex(/^MG[0-9a-f]{32}$/).optional(),
+
+  // Passkeys du site web client.
+  WEBAUTHN_RP_ID: z.string().regex(/^[a-z0-9.-]+$/),
+  WEBAUTHN_RP_NAME: z.string().min(1).max(64).default("TransfertPlus"),
+  WEBAUTHN_ORIGINS: csv.pipe(z.array(originSchema).min(1).max(5)),
+
+  // Attestation iOS (App Attest) : identifiants « TEAMID.bundle.id ».
+  APPLE_APP_ATTEST_APP_IDS: csv.pipe(z.array(z.string().regex(/^[A-Z0-9]{10}\.[A-Za-z0-9.-]+$/)).max(5)).optional(),
+  APPLE_APP_ATTEST_ALLOW_DEVELOPMENT: z.enum(["true", "false"]).default("false"),
+
+  // Attestation Android (Play Integrity).
+  ANDROID_PACKAGE_NAME: z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/).optional(),
+  ANDROID_SIGNING_CERT_SHA256: csv.pipe(z.array(z.string().regex(/^[A-Za-z0-9_-]{43}$/)).max(5)).optional(),
+  GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT: jsonFromString(serviceAccountSchema).optional(),
+
+  // Contrôle des mots de passe compromis (Have I Been Pwned, k-anonymat).
+  PASSWORD_BREACH_CHECK: z.enum(["enabled", "disabled"]).default("enabled"),
 });
 
 type RawEnvironment = z.infer<typeof rawEnvironmentSchema>;
@@ -157,6 +212,28 @@ export interface AppConfig {
   readonly crypto: {
     readonly piiKeyring: { readonly activeKeyId: string; readonly keys: ReadonlyMap<string, Buffer> };
     readonly blindIndexKey: Buffer;
+  };
+  readonly auth: {
+    readonly customerSigningKey: PrivateJwk;
+    readonly otpHmacKey: Buffer;
+    readonly sms:
+      | { readonly provider: "log" }
+      | {
+          readonly provider: "twilio";
+          readonly accountSid: string;
+          readonly authToken: string;
+          readonly messagingServiceSid: string;
+        };
+    readonly webauthn: { readonly rpId: string; readonly rpName: string; readonly origins: readonly string[] };
+    readonly appAttest: { readonly appIds: readonly string[]; readonly allowDevelopment: boolean } | undefined;
+    readonly playIntegrity:
+      | {
+          readonly packageName: string;
+          readonly certificateDigests: readonly string[];
+          readonly serviceAccount: GoogleServiceAccount;
+        }
+      | undefined;
+    readonly passwordBreachCheck: boolean;
   };
 }
 
@@ -197,9 +274,52 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (customerKids.has(key.kid)) problems.push(`la clé ${key.kid} est partagée entre clients et personnel`);
   }
 
+  if (strict) {
+    if (raw.SMS_PROVIDER === "log") problems.push("SMS_PROVIDER=log (codes dans les journaux) interdit hors développement");
+    if (raw.APPLE_APP_ATTEST_ALLOW_DEVELOPMENT === "true" && raw.APP_ENV === "production") {
+      problems.push("APPLE_APP_ATTEST_ALLOW_DEVELOPMENT=true interdit en production");
+    }
+    if (raw.PASSWORD_BREACH_CHECK === "disabled" && raw.APP_ENV === "production") {
+      problems.push("PASSWORD_BREACH_CHECK=disabled interdit en production");
+    }
+    for (const origin of raw.WEBAUTHN_ORIGINS) {
+      if (origin.protocol !== "https:") problems.push(`origine WebAuthn non https interdite : ${origin.origin}`);
+    }
+  }
+
+  const signingKey = raw.JWT_CUSTOMER_SIGNING_KEY;
+  const publishedKey = raw.JWT_CUSTOMER_PUBLIC_JWKS.keys.find((key) => key.kid === signingKey.kid);
+  if (publishedKey?.x !== signingKey.x) {
+    problems.push(`la clé de signature ${signingKey.kid} doit être publiée (même kid, même x) dans JWT_CUSTOMER_PUBLIC_JWKS`);
+  }
+
+  if (raw.SMS_PROVIDER === "twilio" && (raw.TWILIO_ACCOUNT_SID === undefined || raw.TWILIO_AUTH_TOKEN === undefined || raw.TWILIO_MESSAGING_SERVICE_SID === undefined)) {
+    problems.push("SMS_PROVIDER=twilio exige TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN et TWILIO_MESSAGING_SERVICE_SID");
+  }
+
+  const androidValues = [raw.ANDROID_PACKAGE_NAME, raw.ANDROID_SIGNING_CERT_SHA256, raw.GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT];
+  const androidConfigured = androidValues.filter((value) => value !== undefined).length;
+  if (androidConfigured !== 0 && androidConfigured !== androidValues.length) {
+    problems.push("Play Integrity exige ensemble ANDROID_PACKAGE_NAME, ANDROID_SIGNING_CERT_SHA256 et GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT");
+  }
+
+  for (const rpOrigin of raw.WEBAUTHN_ORIGINS) {
+    const host = rpOrigin.hostname;
+    if (host !== raw.WEBAUTHN_RP_ID && !host.endsWith(`.${raw.WEBAUTHN_RP_ID}`)) {
+      problems.push(`l'origine WebAuthn ${rpOrigin.origin} n'appartient pas au domaine ${raw.WEBAUTHN_RP_ID}`);
+    }
+  }
+
   const piiKeys = new Map(Object.entries(raw.PII_KEYRING.keys));
+  const secretKeys: [string, Buffer][] = [
+    ["BLIND_INDEX_KEY", raw.BLIND_INDEX_KEY],
+    ["OTP_HMAC_KEY", raw.OTP_HMAC_KEY],
+  ];
+  if (raw.BLIND_INDEX_KEY.equals(raw.OTP_HMAC_KEY)) problems.push("OTP_HMAC_KEY doit être distincte de BLIND_INDEX_KEY");
   for (const [keyId, key] of piiKeys) {
-    if (key.equals(raw.BLIND_INDEX_KEY)) problems.push(`BLIND_INDEX_KEY ne doit pas être identique à la clé ${keyId}`);
+    for (const [name, secret] of secretKeys) {
+      if (key.equals(secret)) problems.push(`${name} ne doit pas être identique à la clé ${keyId}`);
+    }
   }
 
   if (problems.length > 0) {
@@ -228,6 +348,37 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     crypto: {
       piiKeyring: { activeKeyId: raw.PII_KEYRING.activeKeyId, keys: piiKeys },
       blindIndexKey: raw.BLIND_INDEX_KEY,
+    },
+    auth: {
+      customerSigningKey: signingKey,
+      otpHmacKey: raw.OTP_HMAC_KEY,
+      sms:
+        raw.SMS_PROVIDER === "log" || raw.TWILIO_ACCOUNT_SID === undefined || raw.TWILIO_AUTH_TOKEN === undefined || raw.TWILIO_MESSAGING_SERVICE_SID === undefined
+          ? { provider: "log" }
+          : {
+              provider: "twilio",
+              accountSid: raw.TWILIO_ACCOUNT_SID,
+              authToken: raw.TWILIO_AUTH_TOKEN,
+              messagingServiceSid: raw.TWILIO_MESSAGING_SERVICE_SID,
+            },
+      webauthn: {
+        rpId: raw.WEBAUTHN_RP_ID,
+        rpName: raw.WEBAUTHN_RP_NAME,
+        origins: raw.WEBAUTHN_ORIGINS.map((origin) => origin.origin),
+      },
+      appAttest:
+        raw.APPLE_APP_ATTEST_APP_IDS === undefined || raw.APPLE_APP_ATTEST_APP_IDS.length === 0
+          ? undefined
+          : { appIds: raw.APPLE_APP_ATTEST_APP_IDS, allowDevelopment: raw.APPLE_APP_ATTEST_ALLOW_DEVELOPMENT === "true" },
+      playIntegrity:
+        raw.ANDROID_PACKAGE_NAME === undefined || raw.ANDROID_SIGNING_CERT_SHA256 === undefined || raw.GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT === undefined
+          ? undefined
+          : {
+              packageName: raw.ANDROID_PACKAGE_NAME,
+              certificateDigests: raw.ANDROID_SIGNING_CERT_SHA256,
+              serviceAccount: raw.GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT,
+            },
+      passwordBreachCheck: raw.PASSWORD_BREACH_CHECK === "enabled",
     },
   };
 }

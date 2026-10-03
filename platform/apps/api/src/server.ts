@@ -1,11 +1,13 @@
 import type { Server } from "node:http";
 
 import { createApp } from "./app.js";
+import { PostgresSessionValidator } from "./auth/sessions.js";
 import { ConfigurationError, loadConfig } from "./config/env.js";
 import { createLogger } from "./config/logger.js";
 import { checkDatabase, createDatabasePool } from "./db/pool.js";
 import { createRedisRateLimiter } from "./middlewares/rateLimit.js";
 import { checkRedis, createRedisClient } from "./lib/redis.js";
+import { createAuthModule } from "./modules/auth/index.js";
 
 /**
  * Point d'entrée du processus : construit les ressources, démarre le serveur
@@ -17,6 +19,10 @@ const SHUTDOWN_TIMEOUT_MS = 25_000;
 
 /** Limite globale par IP : 300 requêtes / minute, blocage 60 s au-delà. */
 const GLOBAL_RATE_LIMIT = { keyPrefix: "global-ip", points: 300, durationSeconds: 60, blockDurationSeconds: 60 } as const;
+/** Routes d'authentification publiques : 60 requêtes / 10 min par IP. */
+const AUTH_PUBLIC_RATE_LIMIT = { keyPrefix: "auth-ip", points: 60, durationSeconds: 600, blockDurationSeconds: 600 } as const;
+/** Inscription / connexion : 10 tentatives / 15 min par numéro de téléphone. */
+const AUTH_PHONE_RATE_LIMIT = { keyPrefix: "auth-phone", points: 10, durationSeconds: 900, blockDurationSeconds: 900 } as const;
 
 async function main(): Promise<void> {
   let config;
@@ -36,6 +42,17 @@ async function main(): Promise<void> {
   await redis.connect();
   await checkDatabase(pool);
 
+  const authModule = createAuthModule({
+    config,
+    pool,
+    logger,
+    sessions: new PostgresSessionValidator(pool),
+    limiters: {
+      publicByIp: createRedisRateLimiter(redis, AUTH_PUBLIC_RATE_LIMIT),
+      byPhone: createRedisRateLimiter(redis, AUTH_PHONE_RATE_LIMIT),
+    },
+  });
+
   const app = createApp({
     config,
     logger,
@@ -44,6 +61,9 @@ async function main(): Promise<void> {
       { name: "redis", check: () => checkRedis(redis) },
     ],
     globalRateLimiter: createRedisRateLimiter(redis, GLOBAL_RATE_LIMIT),
+    mountRoutes: (application) => {
+      application.use(authModule.router);
+    },
   });
 
   const server: Server = app.listen(config.http.port, config.http.host, () => {

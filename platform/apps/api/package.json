@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@node-rs/argon2": "^2.2.1",
+    "@simplewebauthn/server": "^14.0.3",
+    "cbor-x": "^1.6.6",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "helmet": "^8.3.0",
@@ -18,18 +21,20 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@peculiar/x509": "^2.1.0",
+    "@transfertplus/db": "workspace:*",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "eslint": "^10.12.0",
+    "reflect-metadata": "^0.2.2",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.0",
-    "vitest": "^5.0.3",
-    "@transfertplus/db": "workspace:*"
+    "vitest": "^5.0.3"
   },
   "description": "API Node.js (Express, TypeScript) : architecture en couches, sécurité, registre comptable.",
   "scripts": {

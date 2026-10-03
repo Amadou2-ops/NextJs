@@ -30,5 +30,8 @@ du dépôt suit le `AGENTS.md` racine).
 - Erreurs : lever une `AppError` (ou laisser remonter l'erreur PostgreSQL, traduite
   par `toAppError`). Ajouter un code d'erreur = l'ajouter aussi au contrat OpenAPI
   (un test vérifie la concordance).
+- Routes mobiles sensibles : ajouter `requireDeviceSignature` après `authenticate`.
+- Toute nouvelle route doit figurer dans `packages/contracts/openapi.yaml`
+  (un test vérifie la couverture des routes du module d'authentification).
 - Avant de livrer : `pnpm --filter @transfertplus/api typecheck`, `lint`, `test`
   (`TEST_DATABASE_URL` vers une base `*_test`).

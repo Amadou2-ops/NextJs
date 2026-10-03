@@ -14,7 +14,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 0 | Monorepo, configuration, CI, contrat OpenAPI de base | ✅ |
 | 1 | Base de données : 16 migrations, données de référence, tests | ✅ |
 | 2 | Cœur de l'API (config, erreurs, middlewares de sécurité) | ✅ |
-| 3 | Authentification (JWT EdDSA, sessions, appareils, MFA) | à venir |
+| 3 | Authentification client (JWT EdDSA, sessions, appareils attestés, MFA, passkeys) | ✅ |
 | 4 | Service du registre côté API, rapprochement, ancrage | à venir |
 | 5 | Taux de change (Fixer, Open Exchange Rates), devis | à venir |
 | 6 | KYC (Smile ID, Onfido) et webhooks signés | à venir |

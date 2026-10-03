@@ -20,6 +20,14 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     JWT_ADMIN_PUBLIC_JWKS: JSON.stringify({ keys: [keys.admin.publicJwk] }),
     PII_KEYRING: JSON.stringify({ activeKeyId: "pii-2026-01", keys: { "pii-2026-01": randomBytes(32).toString("base64") } }),
     BLIND_INDEX_KEY: randomBytes(32).toString("base64"),
+    JWT_CUSTOMER_SIGNING_KEY: JSON.stringify(keys.customer.privateJwk),
+    OTP_HMAC_KEY: randomBytes(32).toString("base64"),
+    SMS_PROVIDER: "twilio",
+    TWILIO_ACCOUNT_SID: `AC${"a".repeat(32)}`,
+    TWILIO_AUTH_TOKEN: "t".repeat(32),
+    TWILIO_MESSAGING_SERVICE_SID: `MG${"b".repeat(32)}`,
+    WEBAUTHN_RP_ID: "transfertplus.com",
+    WEBAUTHN_ORIGINS: "https://app.transfertplus.com",
     ...overrides,
   };
 }
@@ -40,6 +48,10 @@ describe("configuration", () => {
     ["origine CORS locale", { CORS_ALLOWED_ORIGINS: "https://localhost:3000" }],
     ["journal en debug", { LOG_LEVEL: "debug" }],
     ["émetteur JWT en http", { JWT_ISSUER: "http://auth.transfertplus.com" }],
+    ["SMS journalisés", { SMS_PROVIDER: "log" }],
+    ["contrôle des fuites désactivé", { PASSWORD_BREACH_CHECK: "disabled" }],
+    ["App Attest de développement", { APPLE_APP_ATTEST_APP_IDS: "ABCDE12345.com.transfertplus.app", APPLE_APP_ATTEST_ALLOW_DEVELOPMENT: "true" }],
+    ["origine WebAuthn en http", { WEBAUTHN_ORIGINS: "http://app.transfertplus.com" }],
   ])("refuse en production : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });
@@ -53,6 +65,10 @@ describe("configuration", () => {
     ["même clé pour clients et personnel", { JWT_ADMIN_PUBLIC_JWKS: JSON.stringify({ keys: [keys.customer.publicJwk] }) }],
     ["JSON invalide", { JWT_ADMIN_PUBLIC_JWKS: "{" }],
     ["DATABASE_URL absente", { DATABASE_URL: "" }],
+    ["clé de signature non publiée", { JWT_CUSTOMER_SIGNING_KEY: JSON.stringify({ ...keys.admin.privateJwk }) }],
+    ["Twilio incomplet", { TWILIO_AUTH_TOKEN: "" }],
+    ["origine WebAuthn hors domaine", { WEBAUTHN_ORIGINS: "https://evil.example" }],
+    ["Play Integrity incomplet", { ANDROID_PACKAGE_NAME: "com.transfertplus.app" }],
   ])("refuse dans tous les environnements : %s", (_label, overrides) => {
     expect(() => loadConfig(baseEnv(overrides))).toThrow(ConfigurationError);
   });
@@ -73,6 +89,9 @@ describe("configuration", () => {
         CORS_ALLOWED_ORIGINS: "http://localhost:3000",
         JWT_ISSUER: "http://localhost:8080",
         LOG_LEVEL: "debug",
+        SMS_PROVIDER: "log",
+        WEBAUTHN_RP_ID: "localhost",
+        WEBAUTHN_ORIGINS: "http://localhost:3000",
       }),
     );
     expect(config.database.ssl).toBe(false);

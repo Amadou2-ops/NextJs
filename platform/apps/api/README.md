@@ -36,6 +36,41 @@ phases suivantes.
 L'API n'accepte aucun jeton par cookie. Chaque jeton est vérifié
 cryptographiquement PUIS confronté à sa session en base (révocation immédiate).
 
+## Authentification client (`src/modules/auth`)
+
+| Parcours | Facteurs | Résultat |
+|---|---|---|
+| Inscription | code SMS (possession du numéro) + mot de passe ; mobile : appareil attesté | session niveau 2 |
+| Connexion mobile, appareil connu | mot de passe + requête signée par la clé matérielle | session niveau 2, sans SMS |
+| Connexion web ou nouvel appareil | mot de passe → TOTP si activé, sinon code SMS | session niveau 2 |
+| Passkey (web) | WebAuthn avec vérification de l'utilisateur | session niveau 2 |
+| Renouvellement | jeton opaque à usage unique (+ signature d'appareil sur mobile) | rotation ; réutilisation = révocation de la session |
+
+Garanties principales :
+
+- **Mots de passe** : Argon2id (64 Mio, t = 3), politique de robustesse,
+  refus des mots de passe compromis (Have I Been Pwned, k-anonymat),
+  verrouillage exponentiel après 5 échecs, temps de réponse constant même
+  pour un numéro inconnu.
+- **Codes SMS** : 6 chiffres aléatoires, HMAC lié au défi, 5 minutes,
+  5 tentatives, 5 envois par numéro sur 15 minutes. Un numéro déjà inscrit
+  reçoit un avertissement au lieu d'un code, avec une réponse HTTP identique.
+- **Appareils** : la clé publique de l'appareil est liée au défi serveur dans
+  l'attestation App Attest (chaîne vers la racine Apple épinglée, nonce,
+  App ID, compteur, environnement) ou Play Integrity (requestHash, application
+  reconnue, certificat de signature, intégrité de l'appareil). Chaque requête
+  sensible est ensuite signée (ES256 / EdDSA) avec un compteur anti-rejeu.
+- **TOTP** : RFC 6238, secret chiffré, un pas de temps n'est accepté qu'une
+  fois (garanti en base).
+- **Passkeys** : clés résidentes, vérification de l'utilisateur exigée,
+  origine et domaine vérifiés (résistant à l'hameçonnage), compteur non
+  décroissant.
+- Chaque événement (inscription, connexion, échec, réutilisation de jeton,
+  révocation, activation MFA) est inscrit au journal d'audit chaîné.
+
+L'authentification du personnel (WebAuthn matériel obligatoire) arrive avec
+l'API d'administration (phase 9).
+
 ## Commandes
 
 ```bash
