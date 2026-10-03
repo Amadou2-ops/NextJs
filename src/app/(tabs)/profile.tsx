@@ -1,23 +1,14 @@
-import { Alert, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '../../components/Button';
 import { useWallet } from '../../context/WalletContext';
 import { formatAmount, initials } from '../../lib/format';
 import { colors, radius, spacing } from '../../theme';
 
-function confirmAction(title: string, message: string, onConfirm: () => void) {
-  if (Platform.OS === 'web') {
-    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
-    return;
-  }
-  Alert.alert(title, message, [
-    { text: 'Annuler', style: 'cancel' },
-    { text: 'Confirmer', style: 'destructive', onPress: onConfirm },
-  ]);
-}
-
 export default function ProfileScreen() {
   const { user, balance, transactions, contacts, logout, resetAll } = useWallet();
+  const [confirmingReset, setConfirmingReset] = useState(false);
   if (!user) return null;
 
   const sentCount = transactions.filter((t) => t.type === 'sent').length;
@@ -39,18 +30,27 @@ export default function ProfileScreen() {
       </View>
 
       <Button title="Se déconnecter" variant="secondary" onPress={logout} />
-      <Button
-        title="Réinitialiser l’application"
-        variant="danger"
-        style={{ marginTop: spacing.md }}
-        onPress={() =>
-          confirmAction(
-            'Réinitialiser',
-            'Toutes vos données (compte, solde, historique) seront effacées.',
-            resetAll,
-          )
-        }
-      />
+      {confirmingReset ? (
+        <View style={styles.confirmBox}>
+          <Text style={styles.confirmText}>
+            Toutes vos données (compte, solde, historique) seront effacées.
+          </Text>
+          <Button title="Oui, tout effacer" variant="danger" onPress={resetAll} />
+          <Button
+            title="Annuler"
+            variant="secondary"
+            style={{ marginTop: spacing.sm }}
+            onPress={() => setConfirmingReset(false)}
+          />
+        </View>
+      ) : (
+        <Button
+          title="Réinitialiser l’application"
+          variant="danger"
+          style={{ marginTop: spacing.md }}
+          onPress={() => setConfirmingReset(true)}
+        />
+      )}
       <Text style={styles.note}>
         Application de démonstration : les fonds sont fictifs et les données sont
         stockées uniquement sur cet appareil.
@@ -62,7 +62,7 @@ export default function ProfileScreen() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.stat}>
-      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
+      <Text style={styles.statValue}>
         {value}
       </Text>
       <Text style={styles.statLabel}>{label}</Text>
@@ -97,8 +97,17 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     alignItems: 'center',
   },
-  statValue: { fontSize: 16, fontWeight: '700', color: colors.text },
+  statValue: { fontSize: 15, textAlign: 'center', fontWeight: '700', color: colors.text },
   statLabel: { color: colors.muted, fontSize: 12, marginTop: spacing.xs },
+  confirmBox: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  confirmText: { color: colors.text, marginBottom: spacing.md },
   note: {
     color: colors.muted,
     fontSize: 12,
