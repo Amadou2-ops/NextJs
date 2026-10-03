@@ -1,0 +1,58 @@
+# Environnement de développement local uniquement. Les ports sont liés à
+# 127.0.0.1 pour ne jamais exposer la base sur le réseau de la machine.
+name: transfertplus
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: transfertplus
+      POSTGRES_INITDB_ARGS: "--data-checksums --encoding=UTF8 --locale=C.UTF-8"
+    command:
+      - "postgres"
+      - "-c"
+      - "timezone=UTC"
+      - "-c"
+      - "log_statement=ddl"
+      - "-c"
+      - "lock_timeout=10s"
+      - "-c"
+      - "idle_in_transaction_session_timeout=60s"
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d transfertplus"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-password}
+    command:
+      - "redis-server"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:-local-redis-password}"
+      - "--appendonly"
+      - "yes"
+    ports:
+      - "127.0.0.1:63799:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-local-redis-password}\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:

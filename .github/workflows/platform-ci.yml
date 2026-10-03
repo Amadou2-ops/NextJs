@@ -1,0 +1,74 @@
+name: platform-ci
+
+on:
+  push:
+    paths:
+      - "platform/**"
+      - ".github/workflows/platform-ci.yml"
+  pull_request:
+    paths:
+      - "platform/**"
+      - ".github/workflows/platform-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  database:
+    name: Base de données (migrations, tests, intégrité)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: platform
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: transfertplus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/transfertplus
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/transfertplus_test
+      DATABASE_SSL_MODE: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict
+        run: pnpm --filter @transfertplus/db run typecheck
+      - name: Données de référence à jour avec leur générateur
+        run: |
+          pnpm --filter @transfertplus/db run generate:reference
+          git diff --exit-code -- db/seed
+      - name: Migrations sur base vierge puis relance (idempotence)
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm db:status
+      - name: Tests SQL, concurrence et intégrité
+        run: pnpm db:test
+      - name: Contrôle d'intégrité de la base migrée
+        run: pnpm db:verify

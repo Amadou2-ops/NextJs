@@ -1,0 +1,26 @@
+{
+  "name": "@transfertplus/platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TransfertPlus — infrastructure de transfert d'argent international (API, web client, admin, ledger PostgreSQL).",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @transfertplus/db run migrate",
+    "db:status": "pnpm --filter @transfertplus/db run status",
+    "db:verify": "pnpm --filter @transfertplus/db run verify",
+    "db:seed": "pnpm --filter @transfertplus/db run seed",
+    "db:test": "pnpm --filter @transfertplus/db run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.7",
+    "typescript": "~6.0.3"
+  }
+}

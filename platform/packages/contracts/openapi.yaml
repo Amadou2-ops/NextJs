@@ -1,0 +1,196 @@
+openapi: 3.1.0
+info:
+  title: TransfertPlus API
+  version: 0.1.0
+  description: |
+    API unique servant l'application mobile (Flutter), le site web client et le
+    dashboard d'administration (Next.js).
+
+    Conventions non négociables :
+    - Montants : chaînes d'entiers en unités mineures de la devise
+      (`"10000"` EUR = 100,00 €). Jamais de nombre décimal.
+    - Toute requête mutatrice exige l'en-tête `Idempotency-Key` (16 à 128
+      caractères `[A-Za-z0-9_-]`).
+    - Erreurs au format RFC 9457 (`application/problem+json`) avec un `code`
+      métier stable.
+
+    Ce document est complété module par module (authentification, registre,
+    change, KYC, transferts, AML, administration) selon la feuille de route.
+servers:
+  - url: https://api.transfertplus.example/v1
+    description: Production
+  - url: https://api.staging.transfertplus.example/v1
+    description: Staging (sandbox prestataires)
+security:
+  - mobileBearer: []
+  - webSession: []
+tags:
+  - name: system
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: État de santé (sans authentification)
+      security: []
+      responses:
+        "200":
+          description: Service opérationnel
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, version]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  version:
+                    type: string
+        "503":
+          $ref: "#/components/responses/Problem"
+  /.well-known/jwks.json:
+    get:
+      tags: [system]
+      operationId: getJwks
+      summary: Clés publiques de vérification des jetons d'accès (EdDSA)
+      security: []
+      responses:
+        "200":
+          description: Jeu de clés JWK publiques
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Jwks"
+components:
+  securitySchemes:
+    mobileBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Jeton d'accès EdDSA de 10 minutes, `aud=mobile`, lié à la session
+        (`sid`) et à la clé de l'appareil. Les requêtes sensibles portent en
+        plus l'en-tête `X-Device-Signature`.
+    webSession:
+      type: apiKey
+      in: cookie
+      name: __Host-sid
+      description: |
+        Session du site web client, détenue par le serveur intermédiaire
+        Next.js (BFF). Le navigateur n'a jamais accès au jeton d'accès.
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: __Host-admin-sid
+      description: Session du personnel (WebAuthn obligatoire, `aud=admin`).
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{16,128}$"
+  responses:
+    Problem:
+      description: Erreur (RFC 9457)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    CurrencyCode:
+      type: string
+      pattern: "^[A-Z]{3}$"
+      description: Code ISO 4217.
+    CountryCode:
+      type: string
+      pattern: "^[A-Z]{2}$"
+      description: Code ISO 3166-1 alpha-2.
+    MinorUnits:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,17})$"
+      description: Montant entier en unités mineures, transmis en chaîne pour éviter toute perte de précision.
+    Money:
+      type: object
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount:
+          $ref: "#/components/schemas/MinorUnits"
+        currency:
+          $ref: "#/components/schemas/CurrencyCode"
+    ErrorCode:
+      type: string
+      description: |
+        Codes métier stables. Les codes LG*/TR*/PY*/BO* reprennent les
+        SQLSTATE levés par la base (voir db/migrations/0001).
+      enum:
+        - INSUFFICIENT_FUNDS
+        - UNBALANCED_JOURNAL
+        - ACCOUNT_NOT_POSTABLE
+        - CURRENCY_MISMATCH
+        - IDEMPOTENCY_CONFLICT
+        - IMMUTABLE_RECORD
+        - INVALID_LEDGER_INPUT
+        - INVALID_REVERSAL
+        - LEDGER_CHAIN_BROKEN
+        - INVALID_STATUS_TRANSITION
+        - QUOTE_EXPIRED_OR_CONSUMED
+        - INVALID_PAYMENT_TRANSITION
+        - FOUR_EYES_VIOLATION
+        - VALIDATION_FAILED
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - RATE_LIMITED
+        - INTERNAL_ERROR
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        requestId:
+          type: string
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, crv, x, kid, alg, use]
+            properties:
+              kty:
+                type: string
+                enum: [OKP]
+              crv:
+                type: string
+                enum: [Ed25519]
+              x:
+                type: string
+              kid:
+                type: string
+              alg:
+                type: string
+                enum: [EdDSA]
+              use:
+                type: string
+                enum: [sig]

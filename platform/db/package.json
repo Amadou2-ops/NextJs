@@ -1,0 +1,31 @@
+{
+  "name": "@transfertplus/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Schéma PostgreSQL (registre en partie double), migrateur, données de référence et tests d'intégrité.",
+  "scripts": {
+    "migrate": "tsx src/cli.ts migrate",
+    "status": "tsx src/cli.ts status",
+    "verify": "tsx src/cli.ts verify",
+    "seed": "tsx src/cli.ts seed",
+    "test": "tsx src/cli.ts test",
+    "generate:reference": "tsx scripts/generate-reference-seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.5",
+    "countries-list": "^3.4.1",
+    "country-to-currency": "^3.0.1",
+    "currency-codes": "^2.2.0",
+    "i18n-iso-countries": "^7.14.0",
+    "libphonenumber-js": "^1.12.0",
+    "tsx": "^4.20.0",
+    "typescript": "~6.0.3"
+  }
+}

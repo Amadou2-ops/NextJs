@@ -1,0 +1,4 @@
+# Les migrations sont protégées par empreinte SHA-256 : les fins de ligne ne
+# doivent jamais être converties.
+*.sql text eol=lf
+*.ts text eol=lf
