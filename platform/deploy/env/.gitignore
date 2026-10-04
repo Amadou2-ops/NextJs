@@ -1,0 +1,3 @@
+# Fichiers d'environnement réels et secrets : jamais versionnés.
+*.env
+!*.env.example

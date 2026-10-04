@@ -237,3 +237,37 @@ jobs:
       - run: flutter pub get --enforce-lockfile
       - name: Build iOS sans signature (compile le canal Secure Enclave / App Attest)
         run: flutter build ios --debug --no-codesign --dart-define=API_BASE_URL=https://api.transfertplus.example
+
+  images:
+    name: Images de conteneur (build et analyse)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [api, migrate, web, admin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Construction (sans publication)
+        uses: docker/build-push-action@v6
+        with:
+          context: platform
+          file: platform/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: transfertplus-${{ matrix.target }}:ci
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+      - name: L'image s'exécute en utilisateur non privilégié
+        run: test "$(docker image inspect transfertplus-${{ matrix.target }}:ci --format '{{.Config.User}}')" = "65532:65532"
+      - name: Analyse de vulnérabilités
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: transfertplus-${{ matrix.target }}:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table

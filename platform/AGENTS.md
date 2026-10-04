@@ -82,3 +82,15 @@ du dépôt suit le `AGENTS.md` racine).
   jamais de `double` pour de l'argent.
 - Aucun secret en clair hors du stockage sécurisé ; aucun repli logiciel si
   la Secure Enclave, le Keystore ou l'attestation sont indisponibles.
+
+## Déploiement (`Dockerfile`, `deploy/`)
+
+- Une cible Docker par composant ; images distroless, utilisateur 65532,
+  aucune configuration ni aucun secret intégré. Toute nouvelle variable
+  d'environnement de l'API est ajoutée à `deploy/env/api.env.example`.
+- Un nouveau secret cryptographique est produit par
+  `deploy/scripts/generate-secrets.mjs` (jamais d'exemple de valeur réelle).
+- Le service garde les durcissements Compose (`read_only`, `cap_drop: ALL`,
+  `no-new-privileges`, limites) ; un répertoire inscriptible passe par `tmpfs`.
+- Valider : `docker compose -f deploy/compose.production.yaml config` et
+  `caddy validate --config deploy/Caddyfile`.

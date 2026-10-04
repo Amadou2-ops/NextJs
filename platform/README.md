@@ -25,7 +25,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 11 | Site client Next.js 16 : BFF détenant les jetons, session chiffrée, CSP à nonce, parcours d'envoi, paiement, KYC, sécurité | ✅ |
 | 12 | Back-office Next.js 16 : connexion mot de passe + clé de sécurité, vues RBAC, double validation, registre, audit ; binôme fondateur (0024) | ✅ |
 | 13 | Application mobile Flutter : clé matérielle (Secure Enclave / Keystore), App Attest / Play Integrity, requêtes signées, verrou biométrique, envoi, paiement, KYC | ✅ |
-| 14 | Déploiement et exploitation | à venir |
+| 14 | Déploiement : images distroless signées (SBOM, provenance, analyse bloquante), pile Compose durcie derrière Caddy, secrets générés, procédure d'exploitation | ✅ |
 
 ## Démarrage local
 
@@ -58,6 +58,8 @@ platform/
   apps/admin/              @transfertplus/admin — back-office Next.js 16 (BFF)
   apps/mobile/             application Flutter (iOS / Android)
   packages/contracts/      contrat OpenAPI unique (types TS + client Dart)
+  Dockerfile               images de production (api, migrate, web, admin)
+  deploy/                  pile de production, Caddy, secrets, procédure d'exploitation
   docker-compose.yml       environnement local
   .env.example             variables (aucune valeur réelle)
 ```
@@ -66,4 +68,5 @@ Voir [`db/README.md`](db/README.md) pour la conception du registre et
 [`apps/api/README.md`](apps/api/README.md) pour l'architecture de l'API,
 [`apps/web/README.md`](apps/web/README.md) pour le site client,
 [`apps/admin/README.md`](apps/admin/README.md) pour le back-office,
-[`apps/mobile/README.md`](apps/mobile/README.md) pour l'application mobile.
+[`apps/mobile/README.md`](apps/mobile/README.md) pour l'application mobile,
+[`deploy/README.md`](deploy/README.md) pour le déploiement et l'exploitation.
