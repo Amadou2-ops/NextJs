@@ -181,7 +181,7 @@ class _RecipientFormScreenState extends State<RecipientFormScreen> {
                   isExpanded: true,
                   initialValue: _operator,
                   decoration: const InputDecoration(labelText: 'Opérateur'),
-                  items: [for (final entry in mobileOperators.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],
+                  items: [for (final entry in mobileOperatorsFor(widget.corridor.country).entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],
                   onChanged: (value) => setState(() => _operator = value),
                   validator: (value) => value == null ? 'Opérateur requis' : null,
                 ),

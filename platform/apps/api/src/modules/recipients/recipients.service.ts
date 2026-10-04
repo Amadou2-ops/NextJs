@@ -11,6 +11,7 @@ import { fieldContext } from "../../lib/crypto/fieldEncryption.js";
 import type { FieldEncryptor } from "../../lib/crypto/fieldEncryption.js";
 import { AppError, ConflictError, NotFoundError, sqlStateOf, ValidationError } from "../../lib/errors.js";
 import type { PayoutMethod, RecipientAccount } from "../payments/providers/types.js";
+import { operatorsForCountry } from "./recipients.schemas.js";
 import type { CreateRecipientInput } from "./recipients.schemas.js";
 
 /**
@@ -66,6 +67,12 @@ const OPERATOR_LABELS: Readonly<Record<string, string>> = {
   mpesa: "M-Pesa",
   airtel_money: "Airtel Money",
   vodafone_cash: "Vodafone Cash",
+  mynita: "MyNita",
+  zamani_cash: "Zamani Cash",
+  bankily: "Bankily",
+  masrvi: "Masrvi",
+  sedad: "Sedad",
+  click: "Click",
 };
 
 /** Validation ISO 13616 (pays, longueur minimale, clé mod 97). */
@@ -195,6 +202,9 @@ export class RecipientService {
         case "cash_pickup": {
           const phone = normalizePhone(account.msisdn, input.country as CountryCode);
           if (phone.country !== input.country) throw new NormalizationError("le numéro doit appartenir au pays du bénéficiaire");
+          if (account.kind === "mobile_money" && !operatorsForCountry(input.country).includes(account.operator)) {
+            throw new NormalizationError("cet opérateur n'est pas disponible dans le pays du bénéficiaire");
+          }
           const hint = `•••• ${phone.e164.slice(-4)}`;
           return account.kind === "mobile_money"
             ? {

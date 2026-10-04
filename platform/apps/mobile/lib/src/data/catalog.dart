@@ -54,7 +54,28 @@ const Map<String, String> mobileOperators = {
   'mpesa': 'M-Pesa',
   'airtel_money': 'Airtel Money',
   'vodafone_cash': 'Vodafone Cash',
+  'mynita': 'MyNita',
+  'zamani_cash': 'Zamani Cash',
+  'bankily': 'Bankily',
+  'masrvi': 'Masrvi',
+  'sedad': 'Sedad',
+  'click': 'Click',
 };
+
+/// Opérateurs proposés selon le pays du bénéficiaire (même règle que l'API).
+const Map<String, List<String>> _nationalOperators = {
+  'NE': ['airtel_money', 'moov_money', 'zamani_cash', 'mynita'],
+  'MR': ['bankily', 'masrvi', 'sedad', 'click'],
+};
+const Set<String> _nationalOnly = {'zamani_cash', 'mynita', 'bankily', 'masrvi', 'sedad', 'click'};
+
+Map<String, String> mobileOperatorsFor(String country) {
+  final national = _nationalOperators[country];
+  return {
+    for (final entry in mobileOperators.entries)
+      if (national == null ? !_nationalOnly.contains(entry.key) : national.contains(entry.key)) entry.key: entry.value,
+  };
+}
 
 const Map<String, String> purposes = {
   'family_support': 'Soutien familial',

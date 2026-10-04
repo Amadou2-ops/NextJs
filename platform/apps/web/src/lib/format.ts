@@ -98,7 +98,25 @@ export const MOBILE_OPERATORS = [
   ["mpesa", "M-Pesa"],
   ["airtel_money", "Airtel Money"],
   ["vodafone_cash", "Vodafone Cash"],
+  ["mynita", "MyNita"],
+  ["zamani_cash", "Zamani Cash"],
+  ["bankily", "Bankily"],
+  ["masrvi", "Masrvi"],
+  ["sedad", "Sedad"],
+  ["click", "Click"],
 ] as const;
+
+/** Opérateurs proposés selon le pays du bénéficiaire (même règle que l'API). */
+const NATIONAL_OPERATORS: Readonly<Record<string, readonly string[]>> = {
+  NE: ["airtel_money", "moov_money", "zamani_cash", "mynita"],
+  MR: ["bankily", "masrvi", "sedad", "click"],
+};
+const NATIONAL_ONLY: ReadonlySet<string> = new Set(["zamani_cash", "mynita", "bankily", "masrvi", "sedad", "click"]);
+
+export function operatorsForCountry(country: string): readonly (typeof MOBILE_OPERATORS)[number][] {
+  const national = NATIONAL_OPERATORS[country];
+  return MOBILE_OPERATORS.filter(([code]) => (national === undefined ? !NATIONAL_ONLY.has(code) : national.includes(code)));
+}
 
 /** Corridors proposés à l'envoi (destination, devise reçue, modes de réception). */
 export const CORRIDORS = [

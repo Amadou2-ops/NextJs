@@ -14,7 +14,29 @@ export const MOBILE_OPERATORS = [
   "mpesa",
   "airtel_money",
   "vodafone_cash",
+  "mynita",
+  "zamani_cash",
+  "bankily",
+  "masrvi",
+  "sedad",
+  "click",
 ] as const;
+
+/**
+ * Opérateurs nationaux : seuls proposés dans leur pays, et seuls acceptés
+ * pour un bénéficiaire de ce pays. Ailleurs, les opérateurs régionaux.
+ */
+const NATIONAL_OPERATORS: Readonly<Record<string, readonly MobileOperator[]>> = {
+  NE: ["airtel_money", "moov_money", "zamani_cash", "mynita"],
+  MR: ["bankily", "masrvi", "sedad", "click"],
+};
+const NATIONAL_ONLY: ReadonlySet<MobileOperator> = new Set(["zamani_cash", "mynita", "bankily", "masrvi", "sedad", "click"]);
+
+export type MobileOperator = (typeof MOBILE_OPERATORS)[number];
+
+export function operatorsForCountry(country: string): readonly MobileOperator[] {
+  return NATIONAL_OPERATORS[country] ?? MOBILE_OPERATORS.filter((operator) => !NATIONAL_ONLY.has(operator));
+}
 
 const phone = z.string().min(6).max(20);
 

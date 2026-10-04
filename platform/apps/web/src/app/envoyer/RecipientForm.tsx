@@ -3,7 +3,7 @@
 import { useActionState, useEffect } from "react";
 
 import { FieldError, FormMessage, previous } from "@/components/FormStatus";
-import { MOBILE_OPERATORS, PAYOUT_METHOD_LABELS } from "@/lib/format";
+import { PAYOUT_METHOD_LABELS, operatorsForCountry } from "@/lib/format";
 import type { PayoutMethod, Recipient } from "@/lib/types";
 import type { ActionState } from "@/server/actionState";
 
@@ -64,7 +64,7 @@ export function RecipientForm(props: {
             <label>
               Opérateur
               <select name="operator" defaultValue={previous(state, "operator")} aria-invalid={fields?.["operator"] !== undefined}>
-                {MOBILE_OPERATORS.map(([code, label]) => (
+                {operatorsForCountry(props.country).map(([code, label]) => (
                   <option key={code} value={code}>
                     {label}
                   </option>

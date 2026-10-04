@@ -2853,7 +2853,7 @@ components:
               properties:
                 kind: { type: string, const: mobile_money }
                 msisdn: { type: string }
-                operator: { type: string, enum: [orange_money, wave, mtn_momo, moov_money, free_money, mpesa, airtel_money, vodafone_cash] }
+                operator: { type: string, enum: [orange_money, wave, mtn_momo, moov_money, free_money, mpesa, airtel_money, vodafone_cash, mynita, zamani_cash, bankily, masrvi, sedad, click] }
             - type: object
               additionalProperties: false
               required: [kind]
