@@ -57,6 +57,20 @@ dependencies {
     implementation("com.google.android.play:integrity:1.4.0")
 }
 
+// Les SDK KYC tirent BouncyCastle sous deux variantes (jdk15to18 et jdk18on) qui
+// contiennent les mêmes classes : la vérification des classes dupliquées échoue.
+// La variante jdk15to18 est remplacée par jdk18on, dans la version déjà résolue.
+val bouncyCastleVersion = "1.84"
+configurations.configureEach {
+    resolutionStrategy.dependencySubstitution {
+        listOf("bcprov", "bcpkix", "bcutil", "bcpg").forEach { artifact ->
+            substitute(module("org.bouncycastle:$artifact-jdk15to18"))
+                .using(module("org.bouncycastle:$artifact-jdk18on:$bouncyCastleVersion"))
+                .because("une seule variante de BouncyCastle dans l'application")
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
