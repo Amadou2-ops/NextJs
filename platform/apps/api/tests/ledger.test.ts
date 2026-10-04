@@ -156,12 +156,12 @@ describe("service du registre", () => {
       });
     const first = await postOnce();
     expect(await postOnce()).toBe(first);
-    const reversal = await withTransaction(apiPool, { actor: { type: "admin", id: "admin:tests" } }, (tx) =>
-      ledger.reverse(tx, { journalId: first, idempotencyKey: unique("test:rev"), reason: "Paiement contesté par la banque", actor: "admin:tests" }),
+    const reversal = await withTransaction(apiPool, { actor: { type: "system", id: "tests" } }, (tx) =>
+      ledger.reverse(tx, { journalId: first, idempotencyKey: unique("test:rev"), reason: "Paiement contesté par la banque", actor: "system:tests" }),
     );
     expect(reversal).not.toBe(first);
-    const second = await withTransaction(apiPool, { actor: { type: "admin", id: "admin:tests" } }, (tx) =>
-      ledger.reverse(tx, { journalId: first, idempotencyKey: unique("test:rev"), reason: "Deuxième tentative", actor: "admin:tests" }),
+    const second = await withTransaction(apiPool, { actor: { type: "system", id: "tests" } }, (tx) =>
+      ledger.reverse(tx, { journalId: first, idempotencyKey: unique("test:rev"), reason: "Deuxième tentative", actor: "system:tests" }),
     ).catch((error: unknown) => toAppError(error));
     expect(second).toMatchObject({ code: "INVALID_REVERSAL" });
   });

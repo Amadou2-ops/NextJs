@@ -24,6 +24,7 @@ export class SoftwareAuthenticator {
   readonly credentialId = randomBytes(32);
   private signCount = 0;
   private userHandle: Buffer | undefined;
+  private backedUp = false;
 
   constructor(
     private readonly rpId: string,
@@ -53,12 +54,17 @@ export class SoftwareAuthenticator {
     return Buffer.from(JSON.stringify({ type, challenge, origin: this.origin, crossOrigin: false }), "utf8");
   }
 
-  register(options: { readonly challenge: string; readonly user: { readonly id: string } }): Record<string, unknown> {
+  /**
+   * backupEligible : simule une passkey synchronisée (drapeaux BE/BS), que le
+   * back-office doit refuser.
+   */
+  register(options: { readonly challenge: string; readonly user: { readonly id: string } }, flags: { readonly backupEligible?: boolean } = {}): Record<string, unknown> {
     this.userHandle = Buffer.from(options.user.id, "base64url");
+    this.backedUp = flags.backupEligible === true;
     const counter = Buffer.alloc(4);
     const credentialIdLength = Buffer.alloc(2);
     credentialIdLength.writeUInt16BE(this.credentialId.length);
-    const authData = Buffer.concat([this.rpIdHash(), Buffer.from([0x45]), counter, Buffer.alloc(16), credentialIdLength, this.credentialId, this.cosePublicKey]);
+    const authData = Buffer.concat([this.rpIdHash(), Buffer.from([flags.backupEligible === true ? 0x5d : 0x45]), counter, Buffer.alloc(16), credentialIdLength, this.credentialId, this.cosePublicKey]);
     const attestationObject = Buffer.from(encode({ fmt: "none", attStmt: {}, authData }));
     return {
       id: this.credentialId.toString("base64url"),
@@ -78,7 +84,7 @@ export class SoftwareAuthenticator {
     this.signCount += 1;
     const counter = Buffer.alloc(4);
     counter.writeUInt32BE(this.signCount);
-    const authData = Buffer.concat([this.rpIdHash(), Buffer.from([0x05]), counter]);
+    const authData = Buffer.concat([this.rpIdHash(), Buffer.from([this.backedUp ? 0x1d : 0x05]), counter]);
     const clientDataJSON =
       overrides.origin === undefined
         ? this.clientData("webauthn.get", options.challenge)

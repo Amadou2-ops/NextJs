@@ -10,6 +10,7 @@ import { checkDatabase, createDatabasePool } from "./db/pool.js";
 import { createRedisRateLimiter } from "./middlewares/rateLimit.js";
 import { checkRedis, createRedisClient } from "./lib/redis.js";
 import { createAuthModule } from "./modules/auth/index.js";
+import { createBackofficeModule } from "./modules/backoffice/index.js";
 import { createFxModule } from "./modules/fx/index.js";
 import { createKycModule } from "./modules/kyc/index.js";
 import { createLedgerModule } from "./modules/ledger/index.js";
@@ -38,6 +39,9 @@ const KYC_START_RATE_LIMIT = { keyPrefix: "kyc-start-subject", points: 10, durat
 const TRANSFER_CREATE_RATE_LIMIT = { keyPrefix: "transfer-create-subject", points: 30, durationSeconds: 3600, blockDurationSeconds: 900 } as const;
 /** Ajout de bénéficiaires : 20 / jour par client (typologie de mule). */
 const RECIPIENT_CREATE_RATE_LIMIT = { keyPrefix: "recipient-create-subject", points: 20, durationSeconds: 86_400, blockDurationSeconds: 3600 } as const;
+/** Connexion du personnel : 20 tentatives / 15 min par IP, 10 par adresse e-mail. */
+const ADMIN_LOGIN_IP_RATE_LIMIT = { keyPrefix: "admin-login-ip", points: 20, durationSeconds: 900, blockDurationSeconds: 900 } as const;
+const ADMIN_LOGIN_EMAIL_RATE_LIMIT = { keyPrefix: "admin-login-email", points: 10, durationSeconds: 900, blockDurationSeconds: 900 } as const;
 /** Inscription / connexion : 10 tentatives / 15 min par numéro de téléphone. */
 const AUTH_PHONE_RATE_LIMIT = { keyPrefix: "auth-phone", points: 10, durationSeconds: 900, blockDurationSeconds: 900 } as const;
 
@@ -122,6 +126,22 @@ async function main(): Promise<void> {
     },
   });
 
+  const backofficeModule = createBackofficeModule({
+    config,
+    pool,
+    logger,
+    verifier,
+    sessions,
+    encryptor: authModule.encryptor,
+    indexer: authModule.indexer,
+    ledger: transfersModule.stack.ledger,
+    orchestrator: transfersModule.stack.orchestrator,
+    limiters: {
+      loginByIp: createRedisRateLimiter(redis, ADMIN_LOGIN_IP_RATE_LIMIT),
+      loginByEmail: createRedisRateLimiter(redis, ADMIN_LOGIN_EMAIL_RATE_LIMIT),
+    },
+  });
+
   const app = createApp({
     config,
     logger,
@@ -131,6 +151,8 @@ async function main(): Promise<void> {
     ],
     globalRateLimiter: createRedisRateLimiter(redis, GLOBAL_RATE_LIMIT),
     mountRoutes: (application) => {
+      // En premier : sa garde protège toutes les routes /v1/admin/*.
+      application.use(backofficeModule.router);
       application.use(authModule.router);
       application.use(ledgerModule.router);
       application.use(fxModule.router);

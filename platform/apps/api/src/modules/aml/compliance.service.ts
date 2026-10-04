@@ -99,7 +99,7 @@ export class ComplianceService {
     const senderScreening = await this.deps.screening.screen(client, { type: "user", id: transfer.user_id, fullName: sender.fullName, birthDate: sender.birthDate });
     const recipientScreening = await this.deps.screening.screen(client, { type: "recipient", id: transfer.recipient_id, fullName: recipient.fullName, birthDate: null });
 
-    const rules = await client.query<RuleRow>("SELECT code, severity::text AS severity, blocks_transfer, parameters FROM aml.rules WHERE is_enabled ORDER BY code");
+    const rules = await client.query<RuleRow>("SELECT code, severity::text AS severity, blocks_transfer, parameters FROM aml.rules WHERE is_enabled AND NOT is_manual ORDER BY code");
     const results: RuleResult[] = [];
     for (const rule of rules.rows) {
       const measured = await this.measure(client, rule, transfer, recipient.accountBidx, senderScreening, recipientScreening);

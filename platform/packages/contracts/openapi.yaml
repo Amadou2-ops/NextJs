@@ -31,7 +31,23 @@ tags:
   - name: wallets
     description: Portefeuilles et relevés du client
   - name: admin-ledger
-    description: Consultation du registre par le personnel habilité
+    description: Registre côté personnel (consultation ; gel, ajustement, contre-passation en double validation)
+  - name: admin-auth
+    description: Enrôlement et connexion du personnel (mot de passe + clé WebAuthn matérielle)
+  - name: admin-customers
+    description: Fiches clients, données personnelles tracées, suspension
+  - name: admin-transfers
+    description: Revue des transferts, mise en revue, libération, remboursement ordonné
+  - name: admin-kyc
+    description: Revue manuelle des vérifications d'identité
+  - name: admin-aml
+    description: Alertes, dossiers d'enquête, déclarations de soupçon
+  - name: admin-approvals
+    description: Double validation (règle des quatre yeux)
+  - name: admin-staff
+    description: Personnel, rôles et réseaux autorisés
+  - name: admin-audit
+    description: Journal d'audit chaîné
   - name: fx
     description: Simulation de transfert et devis garantis (taux, frais, montant reçu)
   - name: kyc
@@ -523,7 +539,7 @@ paths:
       operationId: adminGetLedgerAccount
       summary: Compte du registre et son solde (permission ledger:read)
       security:
-        - adminSession: []
+        - adminBearer: []
       parameters:
         - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -535,7 +551,7 @@ paths:
       tags: [admin-ledger]
       operationId: adminListLedgerEntries
       security:
-        - adminSession: []
+        - adminBearer: []
       parameters:
         - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: before, in: query, required: false, schema: { type: string } }
@@ -549,7 +565,7 @@ paths:
       operationId: adminGetLedgerJournal
       summary: Journal, empreintes chaînées et écritures
       security:
-        - adminSession: []
+        - adminBearer: []
       parameters:
         - { name: journalId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -561,7 +577,7 @@ paths:
       operationId: adminTrialBalance
       summary: Balance générale par devise
       security:
-        - adminSession: []
+        - adminBearer: []
       responses:
         "200": { description: Balance générale, content: { application/json: { schema: { type: object } } } }
   /admin/ledger/integrity:
@@ -570,7 +586,7 @@ paths:
       operationId: adminLedgerIntegrity
       summary: Tête de chaîne, dernier rapprochement et dernier ancrage externe
       security:
-        - adminSession: []
+        - adminBearer: []
       responses:
         "200": { description: État d'intégrité, content: { application/json: { schema: { type: object } } } }
   /fx/estimate:
@@ -989,6 +1005,881 @@ paths:
         "200": { $ref: "#/components/responses/WebhookReceived" }
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
+  /admin/auth/enrollment/options:
+    post:
+      tags: [admin-auth]
+      operationId: adminEnrollmentOptions
+      summary: Options WebAuthn d'enrôlement (invitation à usage unique)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [invitationToken]
+              properties:
+                invitationToken: { type: string, pattern: "^inv_[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200": { description: "Défi et options de création de clé", content: { application/json: { schema: { type: object } } } }
+  /admin/auth/enrollment/complete:
+    post:
+      tags: [admin-auth]
+      operationId: adminEnrollmentComplete
+      summary: "Activation du compte : mot de passe (14 caractères minimum) et clé matérielle"
+      description: |
+        Les passkeys synchronisées (drapeau BE) sont refusées : la clé doit rester liée
+        à un authentificateur physique. Le jeton d'invitation est consommé.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [invitationToken, challengeId, password, response]
+              properties:
+                invitationToken: { type: string }
+                challengeId: { type: string, format: uuid }
+                password: { type: string, minLength: 14, maxLength: 128 }
+                nickname: { type: string, maxLength: 60 }
+                response: { type: object, description: "Réponse WebAuthn du navigateur (PublicKeyCredential JSON)" }
+      responses:
+        "201": { description: "Compte activé", content: { application/json: { schema: { type: object } } } }
+  /admin/auth/login:
+    post:
+      tags: [admin-auth]
+      operationId: adminLogin
+      summary: "Connexion, étape 1 : mot de passe (réseau autorisé, verrouillage après 5 échecs)"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, maxLength: 128 }
+      responses:
+        "200": { description: "Défi WebAuthn lié au compte et à l'adresse IP", content: { application/json: { schema: { type: object } } } }
+  /admin/auth/login/verify:
+    post:
+      tags: [admin-auth]
+      operationId: adminLoginVerify
+      summary: "Connexion, étape 2 : assertion de la clé matérielle"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, response]
+              properties:
+                challengeId: { type: string, format: uuid }
+                response: { type: object, description: "Réponse WebAuthn du navigateur (PublicKeyCredential JSON)" }
+      responses:
+        "200": { description: "Session ouverte", content: { application/json: { schema: { $ref: "#/components/schemas/AdminTokens" } } } }
+  /admin/auth/token/refresh:
+    post:
+      tags: [admin-auth]
+      operationId: adminTokenRefresh
+      summary: Renouvellement (jeton à usage unique ; réutilisation = session révoquée)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, pattern: "^art_[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200": { description: "Nouveaux jetons", content: { application/json: { schema: { $ref: "#/components/schemas/AdminTokens" } } } }
+  /admin/auth/logout:
+    post:
+      tags: [admin-auth]
+      operationId: adminLogout
+      summary: Déconnexion (session révoquée)
+      security:
+        - adminBearer: []
+      responses:
+        "204": { description: Session fermée }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/me:
+    get:
+      tags: [admin-auth]
+      operationId: adminMe
+      summary: Profil, rôles et permissions effectives
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers:
+    get:
+      tags: [admin-customers]
+      operationId: adminSearchCustomers
+      summary: Recherche exacte (numéro client, identifiant, téléphone E.164, e-mail)
+      description: |
+        customers:read. Aucune donnée personnelle en clair dans la réponse.
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 254 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending_verification, active, suspended, closed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers/{id}:
+    get:
+      tags: [admin-customers]
+      operationId: adminCustomerDetail
+      summary: "Fiche client : KYC, profil de risque, soldes, alertes, dossiers"
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers/{id}/pii:
+    post:
+      tags: [admin-customers]
+      operationId: adminRevealCustomerPii
+      summary: Données personnelles déchiffrées (customers:read_pii, tracé)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers/{id}/status:
+    post:
+      tags: [admin-customers]
+      operationId: adminSetCustomerStatus
+      summary: Suspension (sessions révoquées) ou rétablissement (customers:suspend)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status: { type: string, enum: [suspended, active] }
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers:
+    get:
+      tags: [admin-transfers]
+      operationId: adminListTransfers
+      summary: File des transferts (transfers:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/TransferStatus" } }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+        - { name: reference, in: query, schema: { type: string } }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}:
+    get:
+      tags: [admin-transfers]
+      operationId: adminTransferDetail
+      summary: "Détail : historique, tentatives, écritures, alertes, évaluation AML"
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}/hold:
+    post:
+      tags: [admin-transfers]
+      operationId: adminHoldTransfer
+      summary: Mise en revue manuelle (transfers:hold) avant tout paiement sortant
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}/release:
+    post:
+      tags: [admin-transfers]
+      operationId: adminReleaseTransfer
+      summary: Libération après levée humaine des alertes bloquantes (transfers:release)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}/refund-requests:
+    post:
+      tags: [admin-transfers]
+      operationId: adminRequestTransferRefund
+      summary: Demande de remboursement ordonné (double validation, transfers:refund)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason, justification]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/kyc/reviews:
+    get:
+      tags: [admin-kyc]
+      operationId: adminKycQueue
+      summary: File de revue manuelle (kyc:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/kyc/verifications/{id}:
+    get:
+      tags: [admin-kyc]
+      operationId: adminKycDetail
+      summary: Vérification, preuve d'identité et historique
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: reveal, in: query, schema: { type: string, enum: [identity] }, description: "Déchiffre la pièce (customers:read_pii, tracé)" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/kyc/verifications/{id}/decision:
+    post:
+      tags: [admin-kyc]
+      operationId: adminKycDecision
+      summary: Décision manuelle (kyc:decide) ; le niveau est relevé par la base
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, note]
+              properties:
+                decision: { type: string, enum: [approve, reject, resubmission_required] }
+                reasons: { type: array, maxItems: 10, items: { type: string, pattern: "^[a-z][a-z0-9_]{2,63}$" } }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts:
+    get:
+      tags: [admin-aml]
+      operationId: adminListAlerts
+      summary: Alertes ouvertes par sévérité (aml:alerts:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, under_review, escalated, closed_false_positive, closed_confirmed] } }
+        - { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
+        - { name: mine, in: query, schema: { type: string, enum: ["true", "false"] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}:
+    get:
+      tags: [admin-aml]
+      operationId: adminAlertDetail
+      summary: Alerte et criblage associé (versions de listes, correspondances)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}/assign:
+    post:
+      tags: [admin-aml]
+      operationId: adminAssignAlert
+      summary: Prise en charge (aml:alerts:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}/escalate:
+    post:
+      tags: [admin-aml]
+      operationId: adminEscalateAlert
+      summary: Escalade
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}/resolve:
+    post:
+      tags: [admin-aml]
+      operationId: adminResolveAlert
+      summary: Clôture humaine (faux positif ou confirmée ; sanction confirmée = client gelé)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome, note]
+              properties:
+                outcome: { type: string, enum: [false_positive, confirmed] }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases:
+    get:
+      tags: [admin-aml]
+      operationId: adminListCases
+      summary: Dossiers d'enquête
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, investigating, sar_filed, closed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin-aml]
+      operationId: adminOpenCase
+      summary: Ouverture d'un dossier (aml:cases:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId, summary]
+              properties:
+                userId: { type: string, format: uuid }
+                summary: { type: string, minLength: 10, maxLength: 5000 }
+                alertIds: { type: array, maxItems: 100, items: { type: string, format: uuid } }
+      responses:
+        "201": { description: "Dossier ouvert", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}:
+    get:
+      tags: [admin-aml]
+      operationId: adminCaseDetail
+      summary: Dossier et alertes rattachées
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}/alerts:
+    post:
+      tags: [admin-aml]
+      operationId: adminLinkCaseAlerts
+      summary: Rattachement d'alertes du même client
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [alertIds]
+              properties:
+                alertIds: { type: array, minItems: 1, maxItems: 100, items: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}/status:
+    post:
+      tags: [admin-aml]
+      operationId: adminTransitionCase
+      summary: Instruction ou clôture
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, note]
+              properties:
+                status: { type: string, enum: [investigating, closed] }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}/sar-requests:
+    post:
+      tags: [admin-aml]
+      operationId: adminRequestSar
+      summary: Déclaration de soupçon (double validation, aml:sar:file)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sarReference, justification]
+              properties:
+                sarReference: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9/_.-]{2,99}$" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/ledger/accounts/{id}/status-requests:
+    post:
+      tags: [admin-ledger]
+      operationId: adminRequestAccountStatus
+      summary: Gel ou dégel d'un compte (double validation, ledger:freeze)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason, justification]
+              properties:
+                status: { type: string, enum: [frozen, active] }
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/ledger/adjustment-requests:
+    post:
+      tags: [admin-ledger]
+      operationId: adminRequestAdjustment
+      summary: Écriture d'ajustement équilibrée (double validation, ledger:adjust)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [description, entries, justification]
+              properties:
+                description: { type: string, minLength: 10, maxLength: 500 }
+                entries: { type: array, minItems: 2, maxItems: 20, items: { type: object, additionalProperties: false, required: [accountId, direction, amountMinor, currency], properties: { accountId: { type: string, format: uuid }, direction: { type: string, enum: [debit, credit] }, amountMinor: { $ref: "#/components/schemas/PositiveMinorUnits" }, currency: { $ref: "#/components/schemas/CurrencyCode" } } } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/ledger/journals/{id}/reversal-requests:
+    post:
+      tags: [admin-ledger]
+      operationId: adminRequestReversal
+      summary: Contre-passation d'un journal (double validation, ledger:adjust)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason, justification]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals:
+    get:
+      tags: [admin-approvals]
+      operationId: adminListApprovals
+      summary: Demandes de double validation (approvals:decide)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, expired, executed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals/{id}:
+    get:
+      tags: [admin-approvals]
+      operationId: adminApprovalDetail
+      summary: Demande
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals/{id}/approve:
+    post:
+      tags: [admin-approvals]
+      operationId: adminApprove
+      summary: Approbation ET exécution par l'approbateur (jamais le demandeur)
+      description: |
+        L'approbateur doit détenir approvals:decide et la permission de l'action. La base
+        vérifie la demande approuvée, sa cible et l'identité de l'exécutant.
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals/{id}/reject:
+    post:
+      tags: [admin-approvals]
+      operationId: adminReject
+      summary: Refus motivé
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff:
+    get:
+      tags: [admin-staff]
+      operationId: adminListStaff
+      summary: Personnel (admins:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [invited, active, suspended, disabled] } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/invitations:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestInvitation
+      summary: Invitation (double validation) ; le lien d'enrôlement est remis à l'approbateur
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, fullName, roles, allowedIpRanges, justification]
+              properties:
+                email: { type: string, format: email }
+                fullName: { type: string, minLength: 2, maxLength: 120 }
+                roles: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, enum: [support, risk_manager, super_admin] } }
+                allowedIpRanges: { type: array, minItems: 1, maxItems: 10, items: { type: string, description: "Plage CIDR (IPv4 /16 à /32, IPv6 /32 à /128)" } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}:
+    get:
+      tags: [admin-staff]
+      operationId: adminStaffDetail
+      summary: Membre du personnel
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/role-requests:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestRoles
+      summary: Attribution de rôles (double validation)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [roles, justification]
+              properties:
+                roles: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, enum: [support, risk_manager, super_admin] } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/network-requests:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestNetwork
+      summary: Plages d'adresses autorisées (double validation)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [allowedIpRanges, justification]
+              properties:
+                allowedIpRanges: { type: array, minItems: 1, maxItems: 10, items: { type: string, description: "Plage CIDR (IPv4 /16 à /32, IPv6 /32 à /128)" } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/reactivation-requests:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestReactivation
+      summary: Levée d'une suspension (double validation)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/restriction:
+    post:
+      tags: [admin-staff]
+      operationId: adminRestrictStaff
+      summary: Suspension ou désactivation immédiate (sessions et clés révoquées)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status: { type: string, enum: [suspended, disabled] }
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/roles/{role}:
+    delete:
+      tags: [admin-staff]
+      operationId: adminRevokeRole
+      summary: Retrait d'un rôle (immédiat, jamais sur soi-même)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: role, in: path, required: true, schema: { type: string, enum: [support, risk_manager, super_admin] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/invitation:
+    post:
+      tags: [admin-staff]
+      operationId: adminRenewInvitation
+      summary: Nouvelle invitation pour un compte encore invité
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/audit/events:
+    get:
+      tags: [admin-audit]
+      operationId: adminAuditEvents
+      summary: Journal d'audit chaîné (audit:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: actorId, in: query, schema: { type: string } }
+        - { name: targetType, in: query, schema: { type: string } }
+        - { name: targetId, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: before, in: query, schema: { type: string, pattern: "^[1-9][0-9]{0,18}$" } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/audit/integrity:
+    get:
+      tags: [admin-audit]
+      operationId: adminAuditIntegrity
+      summary: Vérification complète de la chaîne d'empreintes
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
 components:
   securitySchemes:
     mobileBearer:
@@ -1006,11 +1897,16 @@ components:
       description: |
         Session du site web client, détenue par le serveur intermédiaire
         Next.js (BFF). Le navigateur n'a jamais accès au jeton d'accès.
-    adminSession:
-      type: apiKey
-      in: cookie
-      name: __Host-admin-sid
-      description: Session du personnel (WebAuthn obligatoire, `aud=admin`).
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Jeton d'accès du personnel (EdDSA, 10 minutes, `aud=admin`, clés de
+        signature distinctes des clients), obtenu par mot de passe + clé
+        WebAuthn matérielle et détenu par le serveur du dashboard (BFF).
+        Chaque requête vérifie aussi la session, le réseau autorisé du
+        membre et sa permission.
   parameters:
     DeviceId:
       name: X-Device-Id
@@ -1057,6 +1953,12 @@ components:
               received: { type: boolean, const: true }
     Problem:
       description: Erreur (RFC 9457)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Habilitation, réseau ou double validation manquants (FORBIDDEN, FOUR_EYES_VIOLATION)
       content:
         application/problem+json:
           schema:
@@ -1560,3 +2462,41 @@ components:
               use:
                 type: string
                 enum: [sig]
+    AdminTokens:
+      type: object
+      additionalProperties: false
+      required: [accessToken, accessTokenExpiresAt, refreshToken, sessionExpiresAt]
+      properties:
+        accessToken: { type: string, description: "JWT aud=admin, 10 minutes" }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string, pattern: "^art_[A-Za-z0-9_-]{43}$", description: "Usage unique" }
+        sessionExpiresAt: { type: string, format: date-time, description: "Expiration absolue (12 h au plus)" }
+    ApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [id, permission, actionType, targetType, targetId, payload, justification, status, requestedBy, requestedAt, decidedBy, decidedAt, decisionNote, executedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        permission: { type: string }
+        actionType:
+          type: string
+          enum: [invite_admin, grant_roles, reactivate_admin, update_admin_network, refund_transfer, set_account_status, ledger_adjustment, reverse_journal, file_sar]
+        targetType: { type: string }
+        targetId: { type: string }
+        payload: { type: object, description: "Contenu figé par empreinte SHA-256" }
+        justification: { type: string }
+        status: { type: string, enum: [pending, approved, rejected, expired, executed] }
+        requestedBy: { $ref: "#/components/schemas/StaffReference" }
+        requestedAt: { type: string, format: date-time }
+        decidedBy: { oneOf: [{ $ref: "#/components/schemas/StaffReference" }, { type: "null" }] }
+        decidedAt: { type: [string, "null"], format: date-time }
+        decisionNote: { type: [string, "null"] }
+        executedAt: { type: [string, "null"], format: date-time }
+        expiresAt: { type: string, format: date-time }
+    StaffReference:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }

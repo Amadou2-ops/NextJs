@@ -156,6 +156,20 @@ const rawEnvironmentSchema = z.object({
   // Clé HMAC des codes à usage unique (SMS).
   OTP_HMAC_KEY: base64Key32,
 
+  // Personnel : clé PRIVÉE de signature des jetons aud=admin (publiée dans
+  // JWT_ADMIN_PUBLIC_JWKS), clés WebAuthn du dashboard, sessions courtes.
+  JWT_ADMIN_SIGNING_KEY: jsonFromString(okpPrivateJwkSchema),
+  ADMIN_WEBAUTHN_RP_ID: z.string().regex(/^[a-z0-9.-]+$/),
+  ADMIN_WEBAUTHN_RP_NAME: z.string().min(1).max(64).default("TransfertPlus Back-office"),
+  ADMIN_WEBAUTHN_ORIGINS: csv.pipe(z.array(originSchema).min(1).max(3)),
+  // Modèles de clés matérielles acceptés (AAGUID), vide = tout authentificateur lié à l'appareil.
+  ADMIN_WEBAUTHN_ALLOWED_AAGUIDS: csv.pipe(z.array(z.uuid()).max(50)).optional(),
+  ADMIN_SESSION_IDLE_MINUTES: z.coerce.number().int().min(5).max(30).default(15),
+  ADMIN_SESSION_ABSOLUTE_HOURS: z.coerce.number().int().min(1).max(12).default(8),
+  ADMIN_INVITATION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(48),
+  // Page d'enrôlement du dashboard (le jeton d'invitation y est ajouté en fragment).
+  ADMIN_ENROLLMENT_URL: z.url({ protocol: /^https?$/ }),
+
   SMS_PROVIDER: z.enum(["twilio", "log"]).default("twilio"),
   TWILIO_ACCOUNT_SID: z.string().regex(/^AC[0-9a-f]{32}$/).optional(),
   TWILIO_AUTH_TOKEN: z.string().min(32).optional(),
@@ -371,6 +385,14 @@ export interface AppConfig {
     readonly circuitOpenSeconds: number;
     readonly syncIntervalMs: number;
   };
+  readonly admin: {
+    readonly signingKey: PrivateJwk;
+    readonly webauthn: { readonly rpId: string; readonly rpName: string; readonly origins: readonly string[]; readonly allowedAaguids: ReadonlySet<string> };
+    readonly sessionIdleMs: number;
+    readonly sessionAbsoluteMs: number;
+    readonly invitationTtlMs: number;
+    readonly enrollmentUrl: string;
+  };
   readonly aml: {
     readonly ofacSdnUrl: string;
     readonly ofacAltUrl: string;
@@ -534,6 +556,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     problems.push("Play Integrity exige ensemble ANDROID_PACKAGE_NAME, ANDROID_SIGNING_CERT_SHA256 et GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT");
   }
 
+  const adminSigningKey = raw.JWT_ADMIN_SIGNING_KEY;
+  const publishedAdminKey = raw.JWT_ADMIN_PUBLIC_JWKS.keys.find((key) => key.kid === adminSigningKey.kid);
+  if (publishedAdminKey?.x !== adminSigningKey.x) {
+    problems.push(`la clé de signature ${adminSigningKey.kid} doit être publiée (même kid, même x) dans JWT_ADMIN_PUBLIC_JWKS`);
+  }
+  if (adminSigningKey.x === raw.JWT_CUSTOMER_SIGNING_KEY.x) problems.push("les jetons clients et personnel doivent être signés par des clés distinctes");
+  for (const rpOrigin of raw.ADMIN_WEBAUTHN_ORIGINS) {
+    const host = rpOrigin.hostname;
+    if (host !== raw.ADMIN_WEBAUTHN_RP_ID && !host.endsWith(`.${raw.ADMIN_WEBAUTHN_RP_ID}`)) {
+      problems.push(`l'origine WebAuthn ${rpOrigin.origin} n'appartient pas au domaine ${raw.ADMIN_WEBAUTHN_RP_ID}`);
+    }
+    if (strict && rpOrigin.protocol !== "https:") problems.push(`origine WebAuthn du personnel en clair : ${rpOrigin.origin}`);
+  }
+  if (!raw.ADMIN_WEBAUTHN_ORIGINS.some((origin) => origin.origin === new URL(raw.ADMIN_ENROLLMENT_URL).origin)) {
+    problems.push("ADMIN_ENROLLMENT_URL doit appartenir à l'une des ADMIN_WEBAUTHN_ORIGINS");
+  }
+
   for (const rpOrigin of raw.WEBAUTHN_ORIGINS) {
     const host = rpOrigin.hostname;
     if (host !== raw.WEBAUTHN_RP_ID && !host.endsWith(`.${raw.WEBAUTHN_RP_ID}`)) {
@@ -680,6 +719,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       circuitFailureThreshold: raw.CIRCUIT_FAILURE_THRESHOLD,
       circuitOpenSeconds: raw.CIRCUIT_OPEN_SECONDS,
       syncIntervalMs: raw.PAYMENTS_SYNC_INTERVAL_MINUTES * 60_000,
+    },
+    admin: {
+      signingKey: raw.JWT_ADMIN_SIGNING_KEY,
+      webauthn: {
+        rpId: raw.ADMIN_WEBAUTHN_RP_ID,
+        rpName: raw.ADMIN_WEBAUTHN_RP_NAME,
+        origins: raw.ADMIN_WEBAUTHN_ORIGINS.map((origin) => origin.origin),
+        allowedAaguids: new Set((raw.ADMIN_WEBAUTHN_ALLOWED_AAGUIDS ?? []).map((aaguid) => aaguid.toLowerCase())),
+      },
+      sessionIdleMs: raw.ADMIN_SESSION_IDLE_MINUTES * 60_000,
+      sessionAbsoluteMs: raw.ADMIN_SESSION_ABSOLUTE_HOURS * 3_600_000,
+      invitationTtlMs: raw.ADMIN_INVITATION_TTL_HOURS * 3_600_000,
+      enrollmentUrl: raw.ADMIN_ENROLLMENT_URL,
     },
     aml: {
       ofacSdnUrl: raw.AML_OFAC_SDN_URL,

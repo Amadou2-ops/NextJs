@@ -35,6 +35,12 @@ export interface TransactionOptions {
   readonly readOnly?: boolean;
   readonly changeNote?: string;
   readonly maxAttempts?: number;
+  /**
+   * Demande de double validation exécutée par cette transaction : la base
+   * vérifie qu'elle est approuvée, par l'acteur, sur la cible de l'action
+   * (backoffice.assert_approved).
+   */
+  readonly approvalRequestId?: string;
 }
 
 export interface Queryable {
@@ -56,6 +62,7 @@ const ISOLATION_SQL: Readonly<Record<IsolationLevel, string>> = {
 };
 
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9:_.@-]{1,200}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class TransactionError extends Error {
   override readonly name = "TransactionError";
@@ -72,6 +79,9 @@ export async function withTransaction<T>(
   if (options.changeNote !== undefined && options.changeNote.length > 1000) {
     throw new TransactionError("note de changement trop longue (1000 caractères maximum)");
   }
+  if (options.approvalRequestId !== undefined && !UUID_PATTERN.test(options.approvalRequestId)) {
+    throw new TransactionError("identifiant de demande d'approbation invalide");
+  }
   const maxAttempts = options.maxAttempts ?? 3;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) {
     throw new TransactionError("maxAttempts doit être compris entre 1 et 10");
@@ -87,8 +97,9 @@ export async function withTransaction<T>(
       await connection.query(
         `SELECT set_config('app.actor_type', $1, true),
                 set_config('app.actor_id', $2, true),
-                set_config('app.change_note', $3, true)`,
-        [options.actor.type, options.actor.id, options.changeNote ?? ""],
+                set_config('app.change_note', $3, true),
+                set_config('app.approval_request_id', $4, true)`,
+        [options.actor.type, options.actor.id, options.changeNote ?? "", options.approvalRequestId ?? ""],
       );
       const client: TransactionClient = {
         attempt,

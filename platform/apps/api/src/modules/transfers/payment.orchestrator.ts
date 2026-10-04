@@ -583,6 +583,61 @@ export class PaymentOrchestrator {
     return moved;
   }
 
+  // ---------------------------------------------------------------------------
+  // Décisions de conformité (back-office). L'acteur est le membre du personnel ;
+  // la base vérifie sa permission et, pour le remboursement, la double
+  // validation (migration 0023).
+  // ---------------------------------------------------------------------------
+
+  /** Met en revue un transfert financé et pas encore parti, avec une alerte manuelle. */
+  async holdForReview(transferId: string, actor: Actor, reason: string, audit: (client: TransactionClient) => Promise<void>): Promise<"held" | "not_holdable"> {
+    return withTransaction(this.deps.pool, { actor, changeNote: reason }, async (client) => {
+      const transfer = await this.lockTransfer(client, transferId);
+      if (transfer.status !== "funded" && transfer.status !== "payout_pending") return "not_holdable";
+      const active = await client.query("SELECT 1 FROM payments.attempts WHERE transfer_id = $1 AND direction = 'payout' AND status IN ('pending', 'requires_action', 'processing', 'succeeded')", [transferId]);
+      if (active.rowCount !== 0) return "not_holdable";
+      await client.query(
+        `INSERT INTO aml.alerts (user_id, transfer_id, rule_code, severity, score, details, assigned_to_admin_id, status)
+         VALUES ($1, $2, 'MANUAL_REVIEW', 'high', 80, $3::jsonb, $4, 'under_review')`,
+        [transfer.user_id, transferId, JSON.stringify({ reason }), actor.id],
+      );
+      await this.transition(client, transferId, "compliance_review", "manual_review");
+      await this.emit(client, transferId, "transfers.held_for_review", { reason });
+      await audit(client);
+      return "held";
+    });
+  }
+
+  /** Libère un transfert en revue (alertes bloquantes levées) puis lance le paiement sortant. */
+  async releaseFromReview(transferId: string, actor: Actor, note: string, audit: (client: TransactionClient) => Promise<void>): Promise<"released" | "not_in_review"> {
+    const released = await withTransaction(this.deps.pool, { actor, changeNote: note }, async (client) => {
+      const transfer = await this.lockTransfer(client, transferId);
+      if (transfer.status !== "compliance_review") return false;
+      await this.transition(client, transferId, "payout_pending", "compliance_released");
+      await this.emit(client, transferId, "transfers.compliance_released", {});
+      await audit(client);
+      return true;
+    });
+    if (!released) return "not_in_review";
+    await this.dispatchPayoutSafely("compliance_release", transferId);
+    return "released";
+  }
+
+  /**
+   * Remboursement ordonné par la conformité, dans la transaction qui exécute
+   * la demande approuvée. Le remboursement lui-même est lancé après validation
+   * (startRefund), hors transaction.
+   */
+  async orderRefundInTransaction(client: TransactionClient, transferId: string, reason: string): Promise<"refund_pending" | "not_refundable"> {
+    const transfer = await this.lockTransfer(client, transferId);
+    if (!["funded", "payout_pending", "compliance_review", "payout_failed"].includes(transfer.status)) return "not_refundable";
+    const active = await client.query("SELECT 1 FROM payments.attempts WHERE transfer_id = $1 AND direction = 'payout' AND status IN ('pending', 'requires_action', 'processing', 'succeeded')", [transferId]);
+    if (active.rowCount !== 0) return "not_refundable";
+    await this.transition(client, transferId, "refund_pending", "compliance_refund");
+    await this.emit(client, transferId, "transfers.refund_started", { reason: "compliance_refund", note: reason });
+    return "refund_pending";
+  }
+
   async startRefund(transferId: string): Promise<void> {
     const transfer = await this.loadTransfer(this.deps.pool, transferId);
     if (transfer.status !== "refund_pending") return;

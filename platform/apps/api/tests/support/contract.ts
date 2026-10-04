@@ -3,6 +3,7 @@ import { PostgresPermissionChecker } from "../../src/auth/permissions.js";
 import { PostgresSessionValidator } from "../../src/auth/sessions.js";
 import { createMemoryRateLimiter } from "../../src/middlewares/rateLimit.js";
 import { createAuthModule } from "../../src/modules/auth/index.js";
+import { createBackofficeModule } from "../../src/modules/backoffice/index.js";
 import { BlindIndexer } from "../../src/lib/crypto/blindIndex.js";
 import { FieldEncryptor, KeyringKeyProvider } from "../../src/lib/crypto/fieldEncryption.js";
 import { createFxModule } from "../../src/modules/fx/index.js";
@@ -89,9 +90,22 @@ export async function routesForContract(): Promise<readonly { readonly method: s
       inbox: new WebhookInbox(pool, silentLogger),
       limiters: { transfersBySubject: limiter, recipientsBySubject: limiter },
     });
+    const backofficeModule = createBackofficeModule({
+      config,
+      pool,
+      logger: silentLogger,
+      verifier: new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks),
+      sessions: new PostgresSessionValidator(pool),
+      encryptor,
+      indexer: new BlindIndexer(config.crypto.blindIndexKey),
+      ledger: transfersModule.stack.ledger,
+      orchestrator: transfersModule.stack.orchestrator,
+      limiters: { loginByIp: limiter, loginByEmail: limiter },
+      breachChecker: null,
+    });
     // Les routeurs KYC et transferts regroupent des sous-routeurs (client, webhooks).
     const nested = (router: unknown): unknown[] => (router as { readonly stack: readonly { readonly handle: unknown }[] }).stack.map((layer) => layer.handle);
-    const stack = [module.router, ledgerModule.router, fxModule.router, ...nested(kycModule.router), ...nested(transfersModule.router)].flatMap((router) => (router as { readonly stack: readonly RouteLayer[] }).stack);
+    const stack = [backofficeModule.router, module.router, ledgerModule.router, fxModule.router, ...nested(kycModule.router), ...nested(transfersModule.router)].flatMap((router) => (router as { readonly stack: readonly RouteLayer[] }).stack);
     return stack.flatMap((layer) =>
       layer.route === undefined
         ? []

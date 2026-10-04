@@ -116,6 +116,8 @@ describe("transfert financé par le portefeuille", () => {
     const recipientId = await addRecipient(customer);
     const quoteId = await quote(customer, "wallet_balance");
     const settlementBefore = await balance({ type: "provider_settlement", currency: "XOF", provider: "flutterwave" });
+    // Comptes système partagés entre fichiers de test : assertions relatives.
+    const clearingBefore = await balance({ type: "payout_clearing", currency: "XOF", provider: "flutterwave" });
     const feeBefore = await balance({ type: "fee_revenue", currency: "EUR" });
 
     const key = `idem-${randomUUID()}`;
@@ -148,7 +150,7 @@ describe("transfert financé par le portefeuille", () => {
     expect((await postFlutterwave({ event: "transfer.completed", data: { id: order!.id, reference: order!.reference, status: "SUCCESSFUL" } }, "mauvais-secret-0000")).status).toBe(401);
     expect((await postFlutterwave({ event: "transfer.completed", data: { id: order!.id, reference: order!.reference, status: "SUCCESSFUL" } })).status).toBe(200);
     expect(await transferStatus(transfer.id)).toBe("completed");
-    expect(await balance({ type: "payout_clearing", currency: "XOF", provider: "flutterwave" })).toBe(0n);
+    expect(await balance({ type: "payout_clearing", currency: "XOF", provider: "flutterwave" })).toBe(clearingBefore);
     expect(await balance({ type: "provider_settlement", currency: "XOF", provider: "flutterwave" })).toBe(settlementBefore - 64611n - 500n);
     expect(await journals(transfer.id)).toEqual(["transfer:T:funding", "transfer:T:payout:A", "transfer:T:payout_settlement:A", "transfer:T:payout_fee:A"]);
 

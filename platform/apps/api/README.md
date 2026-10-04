@@ -223,6 +223,37 @@ l'API d'administration (phase 9).
   alerte) peut le libérer. Client gelé ou sanctionné : refus `AM001`
   (`COMPLIANCE_BLOCKED`).
 
+## Back-office (`src/modules/backoffice`)
+
+- **Personnel** : invitation à usage unique (jeton de 256 bits, seule son
+  empreinte est stockée, lien remis à l'approbateur), enrôlement avec mot de
+  passe de 14 caractères minimum et clé WebAuthn liée à l'appareil (passkeys
+  synchronisées refusées, liste d'AAGUID facultative). Connexion en deux
+  temps : mot de passe (verrouillage après 5 échecs) puis assertion liée au
+  défi, au compte et à l'adresse IP. Jetons `aud=admin` de 10 minutes signés
+  par une clé distincte des clients, renouvellement à usage unique
+  (réutilisation = session révoquée), sessions de 8 h au plus.
+- **Contrôle d'accès à chaque requête** : session active, adresse IP dans
+  les plages autorisées du membre, permission RBAC lue en base. Une garde de
+  préfixe protège toutes les routes `/v1/admin/*`, y compris celles du
+  registre ; le module doit être monté en premier.
+- **Double validation** (`/v1/admin/approvals`) : invitation, rôles,
+  réactivation, réseau, remboursement ordonné, gel de compte, ajustement et
+  contre-passation, déclaration de soupçon. Le demandeur ne peut ni approuver
+  ni exécuter ; l'approbateur exécute dans la transaction de l'approbation et
+  la base vérifie la demande, sa cible et l'exécutant
+  (`backoffice.assert_approved`, migration 0023).
+- **Décisions humaines vérifiées par la base** : clôture d'alerte, décision
+  KYC, mise en revue et libération de transfert, suspension de client,
+  dossiers d'enquête (permission de l'acteur et signature à son nom).
+- **Données personnelles** : jamais en clair dans les listes et fiches ;
+  déchiffrement sur justification (`customers:read_pii`), tracé dans le
+  journal d'audit chaîné, consultable et vérifiable (`/v1/admin/audit`).
+- **Amorçage** : `BOOTSTRAP_DATABASE_URL=… ADMIN_ENROLLMENT_URL=… pnpm
+  admin:bootstrap --email … --name … --ip-range …` crée le premier
+  super-administrateur (connexion propriétaire, refusé dès qu'un compte
+  existe).
+
 ## Commandes
 
 ```bash

@@ -6,6 +6,7 @@ DO $$
 DECLARE
     v_alice         uuid := pg_temp.id('alice');
     v_admin         uuid;
+    v_granter       uuid;
     v_recipient     uuid;
     v_quote         uuid;
     v_transfer      uuid;
@@ -17,6 +18,12 @@ BEGIN
     INSERT INTO backoffice.admin_users (email, full_name, status, password_hash)
     VALUES ('analyste-aml@transfertplus.example', 'Analyste AML', 'active', '$argon2id$v=19$test')
     RETURNING id INTO v_admin;
+    -- Habilitation exigée en base pour clore une alerte (0023).
+    INSERT INTO backoffice.admin_users (email, full_name, status, password_hash)
+    VALUES ('responsable-aml@transfertplus.example', 'Responsable AML', 'active', '$argon2id$v=19$test')
+    RETURNING id INTO v_granter;
+    INSERT INTO backoffice.admin_user_roles (admin_user_id, role_code, granted_by_admin_id)
+    VALUES (v_admin, 'risk_manager', v_granter);
 
     INSERT INTO transfers.recipients (user_id, country, currency, payout_method, full_name_enc, account_details_enc,
                                       account_details_bidx, display_hint, mobile_operator, pii_key_id)
@@ -62,10 +69,17 @@ BEGIN
     VALUES (v_alice, v_transfer, 'SINGLE_LARGE_TRANSFER', 'high', 75, '{}')
     RETURNING id INTO v_alert;
 
-    -- Alerte bloquante ouverte : sortie de revue vers le paiement refusée.
+    -- Sortie de revue par le système : refusée (décision humaine, 0023).
+    PERFORM pg_temp.assert_error(format(
+        $q$UPDATE transfers.transfers SET status = 'payout_pending' WHERE id = %L$q$, v_transfer),
+        'BO002', 'libération automatique refusée');
+    -- Alerte bloquante ouverte : sortie de revue vers le paiement refusée, même par un analyste.
+    PERFORM set_config('app.actor_type', 'admin', true);
+    PERFORM set_config('app.actor_id', v_admin::text, true);
     PERFORM pg_temp.assert_error(format(
         $q$UPDATE transfers.transfers SET status = 'payout_pending' WHERE id = %L$q$, v_transfer),
         'TR001', 'alerte bloquante ouverte : paiement refusé');
+    PERFORM set_config('app.actor_type', '', true);
 
     -- Clôture par le système : refusée ; par un analyste identifié : acceptée.
     PERFORM pg_temp.assert_error(format(

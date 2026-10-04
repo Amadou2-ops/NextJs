@@ -200,6 +200,7 @@ const SQLSTATE_MAPPINGS: Readonly<Record<string, SqlStateMapping>> = {
     title: "Opération bloquée par la conformité",
     clientDetail: "Votre compte ne permet plus d'émettre de transfert. Contactez le service client.",
   },
+  BO002: { code: "FORBIDDEN", status: 403, title: "Habilitation insuffisante", clientDetail: "Vous ne disposez pas de l'habilitation requise pour cette action." },
   BO001: { code: "FOUR_EYES_VIOLATION", status: 403, title: "Double validation requise", clientDetail: "Cette action exige l'approbation d'un second membre habilité." },
 };
 

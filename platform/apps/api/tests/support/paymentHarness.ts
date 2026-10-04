@@ -4,6 +4,7 @@ import request from "supertest";
 import { expect } from "vitest";
 
 import { AccessTokenVerifier } from "../../src/auth/accessToken.js";
+import { PostgresPermissionChecker } from "../../src/auth/permissions.js";
 import { PostgresSessionValidator } from "../../src/auth/sessions.js";
 import { BlindIndexer } from "../../src/lib/crypto/blindIndex.js";
 import { FieldEncryptor, KeyringKeyProvider, fieldContext } from "../../src/lib/crypto/fieldEncryption.js";
@@ -12,6 +13,8 @@ import { ListIngestionService } from "../../src/modules/aml/listIngestion.servic
 import type { ListEntry, ListSource } from "../../src/modules/aml/lists/sources.js";
 import { DeviceBindingService } from "../../src/modules/auth/deviceBinding.service.js";
 import { MfaService } from "../../src/modules/auth/mfa.service.js";
+import { createBackofficeModule } from "../../src/modules/backoffice/index.js";
+import { createLedgerModule } from "../../src/modules/ledger/index.js";
 import { generateTotpSecret, hotp, timeStep } from "../../src/modules/auth/totp.js";
 import { configuredPaymentProviders, createTransfersModule } from "../../src/modules/transfers/index.js";
 import { WebhookInbox } from "../../src/modules/webhooks/webhookInbox.js";
@@ -89,16 +92,19 @@ export async function createPaymentHarness(extraConfig: Record<string, string> =
   const fake = new FakePaymentProviders();
   const encryptor = new FieldEncryptor(new KeyringKeyProvider(config.crypto.piiKeyring.activeKeyId, config.crypto.piiKeyring.keys));
   const inbox = new WebhookInbox(apiPool, silentLogger);
+  const indexer = new BlindIndexer(config.crypto.blindIndexKey);
+  const verifier = new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks);
+  const sessions = new PostgresSessionValidator(apiPool);
   const transfersModule = createTransfersModule({
     config,
     pool: apiPool,
     logger: silentLogger,
-    verifier: new AccessTokenVerifier(config.jwt.issuer, config.jwt.customerJwks, config.jwt.adminJwks),
-    sessions: new PostgresSessionValidator(apiPool),
+    verifier,
+    sessions,
     deviceBinding: new DeviceBindingService(apiPool),
     mfa: new MfaService(apiPool, encryptor),
     encryptor,
-    indexer: new BlindIndexer(config.crypto.blindIndexKey),
+    indexer,
     inbox,
     limiters: {
       transfersBySubject: createMemoryRateLimiter({ keyPrefix: "transfers", points: 1000, durationSeconds: 60, blockDurationSeconds: 0 }),
@@ -109,9 +115,28 @@ export async function createPaymentHarness(extraConfig: Record<string, string> =
     webhookProcessing: "inline",
   });
   const orchestrator = transfersModule.stack.orchestrator;
+  const backoffice = createBackofficeModule({
+    config,
+    pool: apiPool,
+    logger: silentLogger,
+    verifier,
+    sessions,
+    encryptor,
+    indexer,
+    ledger: transfersModule.stack.ledger,
+    orchestrator,
+    limiters: {
+      loginByIp: createMemoryRateLimiter({ keyPrefix: "admin-login-ip", points: 1000, durationSeconds: 60, blockDurationSeconds: 0 }),
+      loginByEmail: createMemoryRateLimiter({ keyPrefix: "admin-login-email", points: 1000, durationSeconds: 60, blockDurationSeconds: 0 }),
+    },
+    breachChecker: null,
+  });
+  const ledgerModule = createLedgerModule({ pool: apiPool, verifier, sessions, permissions: new PostgresPermissionChecker(apiPool), deviceBinding: new DeviceBindingService(apiPool) });
   const app = buildTestApp(config, {
     mountRoutes: (application) => {
+      application.use(backoffice.router);
       application.use(transfersModule.router);
+      application.use(ledgerModule.router);
     },
   });
 
@@ -311,7 +336,7 @@ export async function createPaymentHarness(extraConfig: Record<string, string> =
     await ingestion.refresh(staticListSource("test_peps", "pep", TEST_PEPS));
   }
 
-  return { keys, config, owner, apiPool, fake, encryptor, inbox, transfersModule, orchestrator, app, verifiedCustomer, totp, addRecipient, quote, createTransfer, transferStatus, balance, journals, payoutAttempts, postFlutterwave, postStripe, postThunes, age, fundFloat, setup, resetEach, teardown, loadScreeningLists };
+  return { keys, config, owner, apiPool, fake, encryptor, indexer, inbox, transfersModule, orchestrator, backoffice, app, verifiedCustomer, totp, addRecipient, quote, createTransfer, transferStatus, balance, journals, payoutAttempts, postFlutterwave, postStripe, postThunes, age, fundFloat, setup, resetEach, teardown, loadScreeningLists };
 }
 
 export type PaymentHarness = Awaited<ReturnType<typeof createPaymentHarness>>;
