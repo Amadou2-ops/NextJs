@@ -87,6 +87,10 @@ describe("configuration", () => {
     ["liste AML en clair", { AML_UN_LIST_URL: "http://scsanctions.un.org/resources/xml/en/consolidated.xml" }],
     ["clé Flutterwave de test", { FLUTTERWAVE_SECRET_KEY: `FLWSECK_TEST-${"e".repeat(32)}-X` }],
     [
+      "rappels Thunes acceptés de toute adresse",
+      { THUNES_BASE_URL: "https://api-mt.thunes.com", THUNES_API_KEY: "key-0001", THUNES_API_SECRET: "s".repeat(24), THUNES_CALLBACK_URL: "https://api.transfertplus.com/v1/webhooks/thunes" },
+    ],
+    [
       "clé Stripe de test",
       { STRIPE_SECRET_KEY: `sk_test_${"a".repeat(24)}`, STRIPE_PUBLISHABLE_KEY: `pk_test_${"b".repeat(24)}`, STRIPE_WEBHOOK_SECRET: `whsec_${"c".repeat(32)}` },
     ],

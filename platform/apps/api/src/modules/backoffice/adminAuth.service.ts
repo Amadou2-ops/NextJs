@@ -263,8 +263,10 @@ export class AdminAuthService {
     }
     if (admin.locked) {
       await this.deps.passwords.verifyAgainstDummy(password);
+      // Même refus qu'un mot de passe erroné : l'existence du compte et son
+      // verrouillage ne se déduisent pas de la réponse (journalisés pour l'audit).
       await this.auditLoginFailure(admin.id, "locked", context, {});
-      throw new AppError("ACCOUNT_LOCKED", 423, "Compte verrouillé", { detail: "Trop de tentatives : réessayez plus tard ou contactez un administrateur." });
+      throw invalidCredentials();
     }
     if (!(await this.deps.passwords.verify(admin.password_hash, password))) {
       await withTransaction(this.deps.pool, { actor: { type: "system", id: "admin-login" } }, async (tx) => {

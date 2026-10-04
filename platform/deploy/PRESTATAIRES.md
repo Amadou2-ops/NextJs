@@ -84,7 +84,7 @@ Exécution :
    paiements.
 3. `THUNES_CALLBACK_URL=https://api.…/v1/webhooks/thunes` (transmise à chaque
    transaction) ; demander à Thunes ses adresses d'émission des rappels pour
-   `THUNES_CALLBACK_ALLOWED_IPS`, et lui communiquer l'adresse de sortie du
+   `THUNES_CALLBACK_ALLOWED_IPS` (obligatoire en production : les rappels Thunes ne sont pas signés), et lui communiquer l'adresse de sortie du
    serveur si l'accès à l'API est filtré.
 4. Production : nouvelles URL et identifiants live fournis par Thunes.
 

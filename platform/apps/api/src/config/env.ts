@@ -532,6 +532,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     if (raw.STRIPE_SECRET_KEY?.includes("_test_") === true) problems.push("la production exige une clé Stripe live");
     if (raw.FLUTTERWAVE_SECRET_KEY?.startsWith("FLWSECK_TEST") === true) problems.push("la production exige une clé Flutterwave live");
     if (raw.AML_OPENSANCTIONS_PEP_URL === undefined) problems.push("la production exige une liste de personnes politiquement exposées (AML_OPENSANCTIONS_PEP_URL)");
+    // Les rappels Thunes ne sont pas signés : seule la liste des adresses
+    // d'émission les authentifie (l'état est de toute façon relu chez Thunes).
+    if (raw.THUNES_API_KEY !== undefined && (raw.THUNES_CALLBACK_ALLOWED_IPS ?? []).length === 0) {
+      problems.push("la production exige la liste des adresses d'émission des rappels Thunes (THUNES_CALLBACK_ALLOWED_IPS)");
+    }
   }
 
   if (strict) {

@@ -7,7 +7,6 @@
 
 const MESSAGES: Readonly<Record<string, string>> = {
   INVALID_CREDENTIALS: "Identifiants ou clé de sécurité refusés.",
-  ACCOUNT_LOCKED: "Trop de tentatives : compte temporairement verrouillé.",
   VERIFICATION_EXPIRED: "Cette étape a expiré. Recommencez.",
   RATE_LIMITED: "Trop de tentatives. Patientez quelques minutes.",
   FORBIDDEN: "Action non autorisée pour votre compte ou depuis ce réseau.",

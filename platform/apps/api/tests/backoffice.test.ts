@@ -148,8 +148,17 @@ describe("connexion du personnel", () => {
       const failed = await request(app).post("/v1/admin/auth/login").send({ email: member.email, password: "mauvais-mot-de-passe" });
       expect(failed.status).toBe(401);
     }
+    // Verrouillé : même le bon mot de passe reçoit le refus générique (aucune indication de verrouillage).
     const locked = await request(app).post("/v1/admin/auth/login").send({ email: member.email, password: member.password });
-    expect(locked.status).toBe(423);
+    expect(locked.status).toBe(401);
+    expect(locked.body.code).toBe("INVALID_CREDENTIALS");
+    const unknown = await request(app).post("/v1/admin/auth/login").send({ email: "inconnu@transfertplus.example", password: member.password });
+    expect(locked.body).toEqual({ ...unknown.body, requestId: locked.body.requestId, instance: locked.body.instance });
+    const lockAudit = await owner.query<{ reason: string }>(
+      "SELECT metadata->>'reason' AS reason FROM audit.events WHERE target_id = $1 AND action = 'backoffice.login_failed' ORDER BY id DESC LIMIT 1",
+      [member.adminId],
+    );
+    expect(lockAudit.rows[0]?.reason).toBe("locked");
     await owner.query("UPDATE backoffice.admin_users SET locked_until = NULL, failed_login_count = 0 WHERE id = $1", [member.adminId]);
 
     await owner.query("UPDATE backoffice.admin_users SET allowed_ip_ranges = '{10.20.0.0/16}' WHERE id = $1", [member.adminId]);
