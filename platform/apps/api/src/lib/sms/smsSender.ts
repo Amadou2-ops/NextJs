@@ -1,5 +1,7 @@
 import type { Logger } from "pino";
 
+import type { AppConfig } from "../../config/env.js";
+
 /**
  * Envoi de SMS (codes à usage unique, alertes de sécurité).
  *
@@ -71,4 +73,9 @@ export class LogSmsSender implements SmsSender {
     this.logger.warn({ to: `${toE164.slice(0, 4)}•••${toE164.slice(-2)}`, devSmsBody: body }, "SMS de développement (non envoyé)");
     return Promise.resolve({ providerMessageId: `dev-${this.counter}` });
   }
+}
+
+/** Expéditeur configuré (Twilio, ou journal en développement et tests). */
+export function smsSenderFromConfig(sms: AppConfig["auth"]["sms"], logger: Logger): SmsSender {
+  return sms.provider === "twilio" ? new TwilioSmsSender(sms.accountSid, sms.authToken, sms.messagingServiceSid) : new LogSmsSender(logger);
 }

@@ -2,7 +2,7 @@ import type { BrowserContext, Page } from "@playwright/test";
 
 import { e2eContext } from "../support/context.js";
 import { enableTotp, equityAccount, openWalletAsMobileApp, registerCustomer } from "../support/customer.js";
-import { approveKycAsProvider, collectBrowserErrors, customerRegisteredSince, freshTotp, frenchMobileNumber, strongPassword } from "../support/helpers.js";
+import { approveKycAsProvider, collectBrowserErrors, customerRegisteredSince, freshTotp, frenchMobileNumber, strongPassword, withOwner } from "../support/helpers.js";
 import { expect, signIn, test } from "../support/staff.js";
 
 /**
@@ -13,7 +13,8 @@ import { expect, signIn, test } from "../support/staff.js";
  *      portefeuille et confirmés par son code TOTP ;
  *   4. aucune route de paiement sortant n'étant configurée dans la pile de
  *      test, l'API rembourse le transfert (comportement de production) ;
- *   5. le registre reste équilibré et sa chaîne de hachage intacte.
+ *   5. le worker notifie le remboursement au client par SMS (outbox) ;
+ *   6. le registre reste équilibré et sa chaîne de hachage intacte.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -142,6 +143,25 @@ test("sans route de paiement sortant, le transfert est remboursé sur le portefe
   await expect(customer.getByRole("definition").filter({ hasText: "•••• 4567 · Orange Money" })).toBeVisible();
   // Remboursement intégral (montant et frais) : le solde revient à 250,00 €.
   await expect((await walletCard()).getByText("250,00 €", { exact: true })).toBeVisible();
+});
+
+test("le worker notifie le remboursement au client, une seule fois", async () => {
+  const transferId = transferUrl.split("/").pop() ?? "";
+  const notifications = (): Promise<{ template: string; status: string }[]> =>
+    withOwner(async (client) => {
+      const result = await client.query<{ template: string; status: string }>(
+        `SELECT n.template, n.status::text AS status
+           FROM integrations.customer_notifications n
+           JOIN integrations.outbox o ON o.id = n.outbox_id
+          WHERE o.aggregate_type = 'transfer' AND o.aggregate_id = $1`,
+        [transferId],
+      );
+      return result.rows;
+    });
+  // Distribution de l'outbox toutes les 10 s.
+  await expect(async () => {
+    expect(await notifications()).toEqual([{ template: "transfer_refunded", status: "sent" }]);
+  }).toPass({ timeout: 30_000 });
 });
 
 test("back-office : transfert remboursé et registre intègre", async ({ staff }) => {

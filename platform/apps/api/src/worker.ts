@@ -7,6 +7,7 @@ import { checkDatabase, createDatabasePool } from "./db/pool.js";
 import { ChainAnchorJob } from "./jobs/anchor.job.js";
 import { FxRefreshJob } from "./jobs/fxRefresh.job.js";
 import { MaintenanceJob } from "./jobs/maintenance.job.js";
+import { OutboxDispatchJob } from "./jobs/outboxDispatch.job.js";
 import { ReconciliationJob } from "./jobs/reconciliation.job.js";
 import { AmlListsJob } from "./jobs/amlLists.job.js";
 import { KycSyncJob } from "./jobs/kycSync.job.js";
@@ -21,6 +22,7 @@ import { configuredListSources } from "./modules/aml/index.js";
 import { ListIngestionService } from "./modules/aml/listIngestion.service.js";
 import { configuredRateProviders, createRateIngestion } from "./modules/fx/index.js";
 import { configuredKycProviders, createKycService } from "./modules/kyc/index.js";
+import { createOutboxDispatcher } from "./modules/notifications/index.js";
 import { registerKycWebhookHandlers } from "./modules/kyc/kyc.webhooks.js";
 import { configuredPaymentProviders, createPaymentStack } from "./modules/transfers/index.js";
 import { WebhookInbox } from "./modules/webhooks/webhookInbox.js";
@@ -30,12 +32,13 @@ import { registerOperationalMetrics } from "./observability/operationalMetrics.j
 
 /**
  * Processus de tâches de fond (séparé de l'API HTTP) : rapprochement
- * d'intégrité du registre, ancrage RFC 3161, purges. Plusieurs instances
+ * d'intégrité du registre, ancrage RFC 3161, purges, distribution de l'outbox. Plusieurs instances
  * peuvent tourner : chaque tâche est protégée par un verrou consultatif.
  */
 
 const MAINTENANCE_INTERVAL_MS = 6 * 3600 * 1000;
 const WEBHOOK_RETRY_INTERVAL_MS = 60 * 1000;
+const OUTBOX_DISPATCH_INTERVAL_MS = 10 * 1000;
 
 async function main(): Promise<void> {
   let config;
@@ -90,6 +93,8 @@ async function main(): Promise<void> {
     jobs.push(new KycSyncJob(kyc, logger, config.kyc.syncIntervalMs));
   }
   jobs.push(new WebhookRetryJob(inbox, logger, WEBHOOK_RETRY_INTERVAL_MS));
+  // Journal d'exploitation et notifications des clients (issues de transferts et d'identité).
+  jobs.push(new OutboxDispatchJob(createOutboxDispatcher({ config, pool, logger, encryptor, workerId }), logger, OUTBOX_DISPATCH_INTERVAL_MS));
 
   const tsa = config.ledger.timestampAuthority;
   if (tsa === undefined) {

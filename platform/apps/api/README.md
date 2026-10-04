@@ -99,6 +99,40 @@ l'API d'administration (phase 9).
   Chaque tâche est protégée par un verrou consultatif PostgreSQL : plusieurs
   instances du worker peuvent tourner sans exécution concurrente.
 
+## Outbox et notifications (`src/modules/notifications`)
+
+Les événements métier sont écrits dans `integrations.outbox` dans la même
+transaction que le changement d'état ; la tâche `outbox-dispatch` du worker
+(toutes les 10 s, lots de 50) les consomme :
+
+- **Réservation** par `integrations.claim_outbox_batch` (SKIP LOCKED, bail de
+  2 min, essais comptés) : plusieurs workers ne traitent jamais le même
+  événement ; une réservation expirée est reprise, ou abandonnée (`dead`) si
+  elle avait atteint le dernier essai.
+- **Journal d'exploitation** : chaque événement est journalisé (Loki) avec la
+  gravité du catalogue (`eventCatalog.ts` : `critical` → `error`, `warning` →
+  `warn`) ; la charge utile est réduite aux identifiants, codes et nombres (ni
+  nom, ni numéro, ni texte libre de prestataire). Un type absent du
+  catalogue est publié et signalé en avertissement.
+- **SMS aux clients** pour six issues seulement : envoi arrivé (montant reçu),
+  remboursé (portefeuille ou moyen de paiement), annulé ; identité vérifiée,
+  refusée, document à renvoyer. Jamais le nom du bénéficiaire ni un motif.
+  **Aucune notification de conformité** (mise en revue, alerte, dossier,
+  déclaration de soupçon) : interdiction de divulgation, garantie aussi par la
+  base (`integrations.customer_notifications`, migration 0027, qui refuse tout
+  autre couple événement / modèle et tout destinataire autre que le client du
+  transfert ou de la vérification).
+- **Une notification par événement** : enregistrée (`sending`) avant l'envoi,
+  confirmée (`sent`, identifiant Twilio) après ; un événement repris n'envoie
+  jamais un second SMS confirmé. Échec temporaire : nouvel essai (1, 2, 4…
+  min, plafonné à 1 h, 20 essais). Numéro refusé par le prestataire :
+  notification abandonnée (`failed`), événement publié. Compte clôturé : rien.
+  Le numéro, chiffré, n'est déchiffré qu'à l'envoi et n'est jamais conservé
+  en clair ni journalisé.
+- Alertes : `OutboxEvenementsAbandonnes`, `NotificationsClientsBloquees`
+  (SMS non confirmés depuis 30 min), `PaiementAnomalieCritique` et
+  `PaiementAnomalie` (événements `payments.*`).
+
 ## Change (`src/modules/fx`)
 
 - **Collecte des taux** (tâche `fx-refresh` du worker, toutes les 15 min) :

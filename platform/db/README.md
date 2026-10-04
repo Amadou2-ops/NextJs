@@ -11,7 +11,7 @@
 | `ledger` | Registre en partie double, chaîné par SHA-256 |
 | `transfers` | Bénéficiaires, barèmes, transferts, machine à états, historique |
 | `payments` | Prestataires, corridors, moyens d'encaissement, disjoncteurs, tentatives |
-| `integrations` | Webhooks authentifiés, rejets, outbox, idempotence HTTP |
+| `integrations` | Webhooks authentifiés, rejets, outbox, notifications des clients, idempotence HTTP |
 | `aml` | Règles, profils de risque, criblage, alertes, dossiers |
 | `backoffice` | Personnel, RBAC, sessions admin, double validation |
 | `audit` | Journal d'audit chaîné, ajout seul |

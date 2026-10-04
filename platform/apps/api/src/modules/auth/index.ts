@@ -9,7 +9,7 @@ import type { AppConfig } from "../../config/env.js";
 import type { DatabasePool } from "../../db/pool.js";
 import { BlindIndexer } from "../../lib/crypto/blindIndex.js";
 import { FieldEncryptor, KeyringKeyProvider } from "../../lib/crypto/fieldEncryption.js";
-import { LogSmsSender, TwilioSmsSender } from "../../lib/sms/smsSender.js";
+import { smsSenderFromConfig } from "../../lib/sms/smsSender.js";
 import type { SmsSender } from "../../lib/sms/smsSender.js";
 import { loadAppleAppAttestationRoot } from "./attestation/appleRootCa.js";
 import { AppAttestVerifier } from "./attestation/appAttest.js";
@@ -58,11 +58,7 @@ export function createAuthModule(params: {
   const { config, pool, logger } = params;
   const auth = config.auth;
 
-  const sms =
-    params.overrides?.sms ??
-    (auth.sms.provider === "twilio"
-      ? new TwilioSmsSender(auth.sms.accountSid, auth.sms.authToken, auth.sms.messagingServiceSid)
-      : new LogSmsSender(logger));
+  const sms = params.overrides?.sms ?? smsSenderFromConfig(auth.sms, logger);
 
   const attestation =
     params.overrides?.attestation ??

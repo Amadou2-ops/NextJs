@@ -118,7 +118,7 @@ routé par Caddy. Étiquettes à cardinalité bornée et sans donnée personnell
 | --- | --- |
 | API (chaque réplique) | Durée des requêtes par méthode, motif de route et classe de statut ; processus Node.js (mémoire, boucle d'événements) |
 | Worker, tâches | Exécutions par issue, durées, dernier succès et période de chaque tâche |
-| Worker, base (à chaque collecte) | Dernier rapprochement du registre (sain ou non) et dernier ancrage RFC 3161 ; listes de sanctions courantes et leur âge ; dernier taux de change ; webhooks en attente ou en échec, refus par prestataire et motif ; outbox par statut et événements émis par type ; transferts non terminés et plus ancien par statut ; alertes LCB-FT ouvertes ; disjoncteurs de paiement |
+| Worker, base (à chaque collecte) | Dernier rapprochement du registre (sain ou non) et dernier ancrage RFC 3161 ; listes de sanctions courantes et leur âge ; dernier taux de change ; webhooks en attente ou en échec, refus par prestataire et motif ; outbox par statut et événements émis par type ; SMS de clients non confirmés ; transferts non terminés et plus ancien par statut ; alertes LCB-FT ouvertes ; disjoncteurs de paiement |
 
 Une collecte qui ne peut pas lire la base répond 503 : la cible est alors
 « injoignable » plutôt que muette.
@@ -128,8 +128,8 @@ configuration par défaut de l'API) :
 
 | Gravité | Alertes |
 | --- | --- |
-| `critical` → PagerDuty et Slack | Intégrité du registre rompue ou événement `ledger.integrity_breach` ; rapprochement absent depuis 3 périodes ; API ou worker injoignable ; webhook en attente depuis plus d'1 h ou abandonné ; outbox abandonnée ; remboursement bloqué depuis plus d'1 h ; listes de sanctions manquantes ou à moins de 4 h du refus ; taux de change périmés (devis refusés) ; disjoncteur ouvert depuis plus de 30 min ; plus de 10 % de 5xx ; erreur fatale journalisée |
-| `warning` → Slack | Ancrage en retard ; tâche sans succès depuis 3 périodes ou en échecs répétés ; webhooks en échec ou en attente depuis plus de 15 min ; rafale de webhooks refusés (falsification ou secret désaligné) ; versement ou financement bloqué ; revue de conformité de plus de 24 h ; alerte LCB-FT bloquante non traitée depuis 4 h (équipe conformité) ; taux de change vieillissant ou refusé ; plus de 2 % de 5xx ; latence ; rafales d'erreurs journalisées ; Loki ou Alertmanager injoignable, journaux non collectés |
+| `critical` → PagerDuty et Slack | Intégrité du registre rompue ou événement `ledger.integrity_breach` ; rapprochement absent depuis 3 périodes ; API ou worker injoignable ; webhook en attente depuis plus d'1 h ou abandonné ; outbox abandonnée ; anomalie de paiement (montant divergent, remboursement en échec, issue inconnue, versement annulé après réussite, rétrofacturation) ; remboursement bloqué depuis plus d'1 h ; listes de sanctions manquantes ou à moins de 4 h du refus ; taux de change périmés (devis refusés) ; disjoncteur ouvert depuis plus de 30 min ; plus de 10 % de 5xx ; erreur fatale journalisée |
+| `warning` → Slack | Ancrage en retard ; tâche sans succès depuis 3 périodes ou en échecs répétés ; webhooks en échec ou en attente depuis plus de 15 min ; rafale de webhooks refusés (falsification ou secret désaligné) ; versement ou financement bloqué ; signal de paiement (préfinancement insuffisant, paiement entrant tardif, versement en attente, frais non comptabilisés) ; SMS de clients non confirmés depuis 30 min ; revue de conformité de plus de 24 h ; alerte LCB-FT bloquante non traitée depuis 4 h (équipe conformité) ; taux de change vieillissant ou refusé ; plus de 2 % de 5xx ; latence ; rafales d'erreurs journalisées ; Loki ou Alertmanager injoignable, journaux non collectés |
 
 Une alerte critique masque sa variante d'avertissement. `VeilleAlertes` est
 toujours active et part vers le service de veille.

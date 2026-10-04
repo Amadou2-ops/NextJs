@@ -192,6 +192,33 @@ groups:
           summary: "{{ $value | humanize }} événements en attente de publication"
           runbook: "deploy/README.md#surveillance-et-alertes"
 
+      - alert: NotificationsClientsBloquees
+        expr: transfertplus_customer_notifications_stalled > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} SMS de clients non confirmés depuis plus de 30 min"
+          description: "Prestataire SMS indisponible ou refusant les envois : vérifier Twilio et les erreurs dans integrations.customer_notifications."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: paiements
+    rules:
+      - alert: PaiementAnomalieCritique
+        expr: increase(transfertplus_outbox_events_total{event_type=~"payments\\.(payin_amount_mismatch|payout_amount_mismatch|refund_amount_mismatch|refund_failed|outcome_unknown|payout_reversed_after_completion|dispute_funds_withdrawn)"}[1h]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Anomalie de paiement : {{ $labels.event_type }}"
+          description: "Montant divergent, remboursement en échec, issue inconnue, versement annulé après réussite ou rétrofacturation : rapprocher avec le prestataire avant toute nouvelle opération sur le transfert."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: PaiementAnomalie
+        expr: increase(transfertplus_outbox_events_total{event_type=~"payments\\.(float_insufficient|late_payin|payout_waiting|fee_not_recorded)"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Signal de paiement : {{ $labels.event_type }}"
+          description: "Préfinancement insuffisant, paiement entrant tardif, versement en attente ou frais prestataire non comptabilisés : à traiter dans la journée."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
   - name: transferts
     rules:
       - alert: RemboursementBloque

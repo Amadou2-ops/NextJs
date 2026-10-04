@@ -20,7 +20,24 @@ const WEBHOOK_SOURCES = ["stripe", "flutterwave", "thunes", "smile_id", "onfido"
 const WEBHOOK_BACKLOG_STATUSES = ["received", "processing", "failed"] as const;
 const OUTBOX_BACKLOG_STATUSES = ["pending", "processing", "failed", "dead"] as const;
 /** Types d'événements surveillés par les règles d'alerte : série à 0 dès le départ, sans quoi `increase()` manquerait la première occurrence. */
-const ALERTED_EVENT_TYPES = ["ledger.integrity_breach", "integrations.webhook_exhausted", "fx.rate_rejected", "aml.list_rejected"] as const;
+// Séries publiées à zéro dès le démarrage : une alerte sur increase() les exige.
+const ALERTED_EVENT_TYPES = [
+  "ledger.integrity_breach",
+  "integrations.webhook_exhausted",
+  "fx.rate_rejected",
+  "aml.list_rejected",
+  "payments.payin_amount_mismatch",
+  "payments.payout_amount_mismatch",
+  "payments.refund_amount_mismatch",
+  "payments.refund_failed",
+  "payments.outcome_unknown",
+  "payments.payout_reversed_after_completion",
+  "payments.dispute_funds_withdrawn",
+  "payments.float_insufficient",
+  "payments.late_payin",
+  "payments.payout_waiting",
+  "payments.fee_not_recorded",
+] as const;
 
 type Row = Readonly<Record<string, unknown>>;
 
@@ -164,6 +181,18 @@ export function registerOperationalMetrics(registry: Registry, db: Queryable): v
       const rows = await query("SELECT event_type, count(*) AS count FROM integrations.outbox GROUP BY 1");
       for (const eventType of ALERTED_EVENT_TYPES) this.set({ event_type: eventType }, 0);
       for (const row of rows) this.set({ event_type: text(row, "event_type") }, numberOf(row["count"]));
+    },
+  });
+
+  new Gauge({
+    name: "transfertplus_customer_notifications_stalled",
+    help: "Notifications de clients enregistrées mais non confirmées par le prestataire SMS depuis plus de 30 minutes.",
+    registers: [registry],
+    async collect() {
+      const rows = await query(
+        "SELECT count(*) AS count FROM integrations.customer_notifications WHERE status = 'sending' AND created_at < now() - interval '30 minutes'",
+      );
+      this.set(numberOf(rows[0]?.["count"] ?? 0));
     },
   });
 

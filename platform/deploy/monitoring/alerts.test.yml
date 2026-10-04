@@ -156,6 +156,49 @@ tests:
           - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker, event_type: integrations.webhook_exhausted }
             exp_annotations: {"description": "L'état d'un paiement, d'un versement ou d'une vérification peut ne plus refléter celui du prestataire : rapprocher manuellement.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Webhook prestataire abandonné après le nombre maximal d'essais"}
 
+  # --- Paiements et notifications --------------------------------------------
+  - name: anomalies de paiement critiques et signaux à traiter
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="payments.payout_amount_mismatch"}'
+        values: "0x10 1x60"
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="payments.float_insufficient"}'
+        values: "0x10 3x60"
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="transfers.completed"}'
+        values: "0x10 40x60"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: PaiementAnomalieCritique
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PaiementAnomalieCritique
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker, event_type: payments.payout_amount_mismatch }
+            exp_annotations: {"description": "Montant divergent, remboursement en échec, issue inconnue, versement annulé après réussite ou rétrofacturation : rapprocher avec le prestataire avant toute nouvelle opération sur le transfert.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Anomalie de paiement : payments.payout_amount_mismatch"}
+      - eval_time: 15m
+        alertname: PaiementAnomalie
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker, event_type: payments.float_insufficient }
+            exp_annotations: {"description": "Préfinancement insuffisant, paiement entrant tardif, versement en attente ou frais prestataire non comptabilisés : à traiter dans la journée.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Signal de paiement : payments.float_insufficient"}
+      - eval_time: 75m
+        alertname: PaiementAnomalieCritique
+        exp_alerts: []
+
+  - name: SMS de clients non confirmés
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_customer_notifications_stalled{job="worker",instance="worker:9464",service="worker"}'
+        values: "0x5 2x30"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NotificationsClientsBloquees
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: NotificationsClientsBloquees
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Prestataire SMS indisponible ou refusant les envois : vérifier Twilio et les erreurs dans integrations.customer_notifications.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "2 SMS de clients non confirmés depuis plus de 30 min"}
+
   # --- Transferts -------------------------------------------------------------
   - name: remboursement bloqué
     interval: 5m
