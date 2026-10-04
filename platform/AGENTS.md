@@ -69,6 +69,16 @@ du dépôt suit le `AGENTS.md` racine).
 - Aucun script, style ni hôte tiers : la CSP n'autorise que `'self'` et le nonce.
 - Avant de livrer : `pnpm --filter @transfertplus/admin typecheck`, `lint`, `test`, `build`.
 
+## Tests de bout en bout (`e2e`)
+
+- Playwright sur la pile réelle démarrée par `scripts/stack.ts` (voir
+  `e2e/README.md`) : `pnpm --filter @transfertplus/e2e e2e` après les builds
+  du site et du back-office.
+- Toute évolution d'un parcours utilisateur (libellé, étape, statut) met à
+  jour le parcours correspondant ; un nouveau parcours critique y est ajouté.
+- Ne simuler que ce qu'un service externe fournirait (SMS, décision du
+  prestataire KYC, listes de sanctions) ; tout le reste passe par le vrai code.
+
 ## Application mobile (`apps/mobile`)
 
 - Flutter (Dart strict : `strict-casts`, `strict-inference`, `strict-raw-types`).

@@ -1,0 +1,4 @@
+# État d'une exécution (clés générées, journaux, liens d'enrôlement) et rapports.
+/.runtime/
+/test-results/
+/playwright-report/

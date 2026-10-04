@@ -27,6 +27,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 13 | Application mobile Flutter : clé matérielle (Secure Enclave / Keystore), App Attest / Play Integrity, requêtes signées, verrou biométrique, envoi, paiement, KYC | ✅ |
 | 14 | Déploiement : images distroless signées (SBOM, provenance, analyse bloquante), pile Compose durcie derrière Caddy, secrets générés, procédure d'exploitation | ✅ |
 | 15 | Mise en production : contrôle des comptes prestataires en lecture seule (identifiants, webhooks, environnement), publication mobile signée (Google Play, TestFlight), procédure d'ouverture sandbox puis live | ✅ |
+| 16 | Tests de bout en bout : Playwright sur une pile réelle (base, Redis, API, worker, site, back-office) ; inscription, TOTP, passkeys, clé de sécurité du personnel, quatre yeux, transfert remboursé, bénéficiaire sanctionné retenu ; job CI | ✅ |
 
 ## Démarrage local
 
@@ -58,6 +59,7 @@ platform/
   apps/web/                @transfertplus/web — site client Next.js 16 (BFF)
   apps/admin/              @transfertplus/admin — back-office Next.js 16 (BFF)
   apps/mobile/             application Flutter (iOS / Android)
+  e2e/                     tests de bout en bout (Playwright, pile réelle)
   packages/contracts/      contrat OpenAPI unique (types TS + client Dart)
   Dockerfile               images de production (api, migrate, web, admin)
   deploy/                  pile de production, Caddy, secrets, procédure d'exploitation,
@@ -72,4 +74,5 @@ Voir [`db/README.md`](db/README.md) pour la conception du registre et
 [`apps/admin/README.md`](apps/admin/README.md) pour le back-office,
 [`apps/mobile/README.md`](apps/mobile/README.md) pour l'application mobile,
 [`deploy/README.md`](deploy/README.md) pour le déploiement et l'exploitation,
-[`deploy/PRESTATAIRES.md`](deploy/PRESTATAIRES.md) pour l'ouverture des comptes prestataires.
+[`deploy/PRESTATAIRES.md`](deploy/PRESTATAIRES.md) pour l'ouverture des comptes prestataires,
+[`e2e/README.md`](e2e/README.md) pour les tests de bout en bout.

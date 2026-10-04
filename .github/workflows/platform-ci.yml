@@ -190,6 +190,79 @@ jobs:
       - name: Build de production
         run: pnpm --filter @transfertplus/admin run build
 
+  e2e:
+    name: Bout en bout (site client et back-office sur pile réelle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: platform
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432
+      E2E_REDIS_URL: redis://127.0.0.1:6379/9
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict et lint des parcours
+        run: |
+          pnpm --filter @transfertplus/e2e run typecheck
+          pnpm --filter @transfertplus/e2e run lint
+      - name: Builds de production du site client et du back-office
+        env:
+          # La configuration est lue au démarrage, pas au build.
+          API_BASE_URL: http://127.0.0.1:8080
+          APP_ORIGIN: http://localhost:3000
+          SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: |
+          pnpm --filter @transfertplus/web run build
+          pnpm --filter @transfertplus/admin run build
+      - name: Navigateur Chromium
+        run: pnpm --filter @transfertplus/e2e exec playwright install --with-deps chromium
+      - name: Parcours de bout en bout
+        run: pnpm --filter @transfertplus/e2e run e2e
+      - name: Rapport, traces et journaux de la pile
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-rapport
+          path: |
+            platform/e2e/playwright-report
+            platform/e2e/test-results
+            platform/e2e/.runtime/*.log
+          retention-days: 14
+
   mobile:
     name: Application mobile (analyse, tests, build Android)
     runs-on: ubuntu-24.04
