@@ -126,6 +126,16 @@ export class TransferService {
     const route = external && payer !== null ? await this.selectPayinRoute(quoted, payer.email !== null) : null;
 
     const created = await withTransaction(this.deps.pool, { actor: { type: "customer", id: userId } }, async (client) => {
+      // Requêtes simultanées de même clé : la seconde attend la fin de la
+      // première puis rejoue son résultat, sans consommer de code ni débiter.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`transfer-create:${userId}:${input.idempotencyKey}`]);
+      const concurrent = await client.query<{ id: string; quote_id: string; recipient_id: string }>(
+        "SELECT id, quote_id, recipient_id FROM transfers.transfers WHERE user_id = $1 AND idempotency_key = $2",
+        [userId, input.idempotencyKey],
+      );
+      const existing = concurrent.rows[0];
+      if (existing !== undefined) return { replayOf: existing };
+
       const authorization =
         auth.audience === "mobile"
           ? { method: "device_signature", deviceId: auth.deviceId }
@@ -162,7 +172,7 @@ export class TransferService {
 
       if (!external) {
         await this.fundFromWallet(client, transfer.id);
-        return { id: transfer.id, attemptId: null };
+        return { id: transfer.id, attemptId: null, replayOf: null };
       }
       if (route === null) throw new Error("route d'encaissement absente");
       await client.query("UPDATE transfers.transfers SET status = 'awaiting_funding' WHERE id = $1", [transfer.id]);
@@ -174,8 +184,15 @@ export class TransferService {
         [attemptId, transfer.id, route.provider, route.id, `pi-${attemptId}`],
       );
       await this.emit(client, transfer.id, "transfers.created", { funding: "external", provider: route.provider });
-      return { id: transfer.id, attemptId };
+      return { id: transfer.id, attemptId, replayOf: null };
     });
+
+    if (created.replayOf !== null) {
+      if (created.replayOf.quote_id !== input.quoteId || created.replayOf.recipient_id !== input.recipientId) {
+        throw new ConflictError("IDEMPOTENCY_CONFLICT", "Cette clé d'idempotence a déjà servi pour un autre transfert.", 422);
+      }
+      return { transfer: await this.view(created.replayOf.id), funding: await this.resumableFunding(created.replayOf.id), replayed: true };
+    }
 
     if (created.attemptId === null) {
       if (this.deps.dispatch === "inline") {

@@ -21,7 +21,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 7 | Bénéficiaires, transferts, routage des paiements (Stripe, Flutterwave, Thunes), remboursements | ✅ |
 | 8 | AML : listes OFAC / ONU / PEP versionnées, criblage, 11 règles, mise en revue garantie par la base | ✅ |
 | 9 | API d'administration : personnel (mot de passe + clé WebAuthn), RBAC, double validation exécutée par l'approbateur, conformité, audit | ✅ |
-| 10 | Tests de l'API | à venir |
+| 10 | Tests de l'API : propriétés, parité avec PostgreSQL, matrice d'autorisation de toutes les routes, concurrence, intégrité en fin de suite, couverture bloquante | ✅ |
 | 11 | Site web client (Next.js, BFF) | à venir |
 | 12 | Dashboard admin (Next.js, WebAuthn) | à venir |
 | 13 | Application mobile Flutter | à venir |

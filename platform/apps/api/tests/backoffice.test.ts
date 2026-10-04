@@ -434,3 +434,76 @@ describe("journal d'audit", () => {
     expect(integrity.body).toMatchObject({ intact: true, problems: [] });
   });
 });
+
+describe("actions à double validation complémentaires", () => {
+  it("attribue un rôle, restreint le réseau (sessions hors plage coupées) et réactive un compte suspendu", async () => {
+    const adminA = await staff(["super_admin"]);
+    const adminB = await staff(["super_admin"]);
+    const target = await staff(["support"]);
+
+    const roles = await as(adminA).post(`/v1/admin/staff/${target.adminId}/role-requests`, { roles: ["risk_manager"], justification: "Passage en équipe conformité" });
+    expect(roles.status).toBe(202);
+    expect((await as(adminB).post(`/v1/admin/approvals/${roles.body.id as string}/approve`)).status).toBe(200);
+    expect((await as(target).get("/v1/admin/me")).body.roles).toEqual(["risk_manager", "support"]);
+
+    const revoked = await as(adminA).delete(`/v1/admin/staff/${target.adminId}/roles/support`, { reason: "Rôle support devenu inutile" });
+    expect(revoked.body.roles).toEqual(["risk_manager"]);
+    expect((await as(adminA).delete(`/v1/admin/staff/${adminA.adminId}/roles/super_admin`, { reason: "Tentative sur soi-même" })).status).toBe(403);
+
+    const network = await as(adminA).post(`/v1/admin/staff/${target.adminId}/network-requests`, { allowedIpRanges: ["10.30.0.0/16"], justification: "Accès limité au VPN du siège" });
+    expect((await as(adminB).post(`/v1/admin/approvals/${network.body.id as string}/approve`)).status).toBe(200);
+    expect((await as(target).get("/v1/admin/me")).status).toBe(401);
+    await owner.query("UPDATE backoffice.admin_users SET allowed_ip_ranges = $2::cidr[] WHERE id = $1", [target.adminId, LOOPBACK]);
+
+    expect((await as(adminA).post(`/v1/admin/staff/${target.adminId}/restriction`, { status: "suspended", reason: "Absence prolongée" })).body.status).toBe("suspended");
+    const reactivation = await as(adminA).post(`/v1/admin/staff/${target.adminId}/reactivation-requests`, { justification: "Retour de congé confirmé" });
+    expect(reactivation.status).toBe(202);
+    const approved = await as(adminB).post(`/v1/admin/approvals/${reactivation.body.id as string}/approve`);
+    expect(approved.body.result).toMatchObject({ status: "active" });
+    expect((await login(target.email, target.password, target.authenticator)).status).toBe(200);
+  });
+
+  it("passe un ajustement équilibré puis le contre-passe, chacun approuvé par un second membre", async () => {
+    const adminA = await staff(["super_admin"]);
+    const adminB = await staff(["super_admin"]);
+    const customer = await verifiedCustomer();
+    const wallet = (await owner.query<{ id: string }>("SELECT id FROM ledger.accounts WHERE owner_user_id = $1 AND account_type = 'customer_wallet' AND currency = 'EUR'", [customer.userId])).rows[0]!.id;
+    const fees = (await owner.query<{ id: string }>("SELECT id FROM ledger.accounts WHERE account_type = 'fee_revenue' AND currency = 'EUR'")).rows[0]!.id;
+    const before = await harness.balance({ type: "customer_wallet", currency: "EUR", userId: customer.userId });
+
+    const adjustment = await as(adminA).post("/v1/admin/ledger/adjustment-requests", {
+      description: "Frais de service omis lors d'un transfert",
+      justification: "Écart constaté au rapprochement du 3 octobre",
+      entries: [
+        { accountId: wallet, direction: "debit", amountMinor: "500", currency: "EUR" },
+        { accountId: fees, direction: "credit", amountMinor: "500", currency: "EUR" },
+      ],
+    });
+    expect(adjustment.status).toBe(202);
+    const executed = await as(adminB).post(`/v1/admin/approvals/${adjustment.body.id as string}/approve`);
+    expect(executed.status).toBe(200);
+    const journalId = executed.body.result.journalId as string;
+    expect(await harness.balance({ type: "customer_wallet", currency: "EUR", userId: customer.userId })).toBe(before - 500n);
+
+    const reversal = await as(adminB).post(`/v1/admin/ledger/journals/${journalId}/reversal-requests`, { reason: "Frais déjà prélevés sur le transfert", justification: "Doublon du prélèvement automatique" });
+    expect(reversal.status).toBe(202);
+    const rejected = await as(adminA).post(`/v1/admin/approvals/${reversal.body.id as string}/reject`, { note: "Pas de doublon : deux transferts distincts" });
+    expect(rejected.body).toMatchObject({ status: "rejected", decidedBy: { id: adminA.adminId } });
+    expect((await as(adminA).post(`/v1/admin/approvals/${reversal.body.id as string}/approve`)).status).toBe(409);
+
+    const again = await as(adminB).post(`/v1/admin/ledger/journals/${journalId}/reversal-requests`, { reason: "Frais déjà prélevés sur le transfert", justification: "Confirmation du doublon par la comptabilité" });
+    expect((await as(adminA).post(`/v1/admin/approvals/${again.body.id as string}/approve`)).status).toBe(200);
+    expect(await harness.balance({ type: "customer_wallet", currency: "EUR", userId: customer.userId })).toBe(before);
+    expect((await as(adminB).post(`/v1/admin/ledger/journals/${journalId}/reversal-requests`, { reason: "Troisième tentative", justification: "Contre-passation déjà faite" })).status).toBe(409);
+  });
+
+  it("renouvelle l'invitation d'un compte encore invité", async () => {
+    const admin = await staff(["super_admin"]);
+    const pending = await invite(["support"]);
+    const renewed = await as(admin).post(`/v1/admin/staff/${pending.adminId}/invitation`);
+    expect(renewed.status).toBe(200);
+    const token = new URLSearchParams(new URL(renewed.body.enrollmentUrl as string).hash.slice(1)).get("invitation")!;
+    expect((await request(app).post("/v1/admin/auth/enrollment/options").send({ invitationToken: pending.token })).status).toBe(410);
+    expect((await enroll(token, `Phrase-de-passe-${randomUUID()}`, new SoftwareAuthenticator(RP_ID, ADMIN_ORIGIN))).status).toBe(201);
+  });
+});

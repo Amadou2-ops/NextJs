@@ -172,7 +172,10 @@ export function convertMinor(
   const shift = targetMinorUnits - sourceMinorUnits;
   const numerator = amountMinor * decimal.coefficient * pow10(Math.max(0, shift));
   const denominator = pow10(decimal.scale) * pow10(Math.max(0, -shift));
-  return numerator / denominator;
+  const converted = numerator / denominator;
+  // Même domaine que la base (bigint) : un résultat hors plafond est refusé, jamais tronqué.
+  if (converted > MAX_MINOR_AMOUNT) throw new MoneyError("montant converti au-delà du plafond autorisé");
+  return converted;
 }
 
 /**

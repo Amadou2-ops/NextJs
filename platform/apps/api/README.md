@@ -254,6 +254,30 @@ l'API d'administration (phase 9).
   super-administrateur (connexion propriétaire, refusé dès qu'un compte
   existe).
 
+## Tests
+
+Base PostgreSQL réelle (recréée à chaque exécution, `TEST_DATABASE_URL`
+en `*_test`), fichiers exécutés en série.
+
+- **Unitaires et HTTP** : chaque module, ses erreurs et ses en-têtes.
+- **Propriétés** (`tests/properties.test.ts`, fast-check, graine fixe) :
+  conversions mineures ↔ décimales, arrondis de frais, points de base qui ne
+  créent jamais d'argent, conversion sous-additive, montant source minimal,
+  marge, JSON sans flottants, similarité de noms, CSV. Parité exacte avec
+  `fx.convert_minor` et l'arrondi de marge de PostgreSQL sur 1000 cas.
+- **Matrice d'autorisation** (`tests/security-matrix.test.ts`) : chaque
+  route exposée (énumérée depuis les routeurs montés) est appelée sans
+  jeton, avec un jeton de la mauvaise audience et avec un rôle insuffisant ;
+  une route ajoutée sans protection fait échouer la suite. Webhooks non
+  signés refusés sans écriture.
+- **Concurrence** (`tests/concurrency.test.ts`) : requêtes simultanées sans
+  double dépense, une seule exécution par clé d'idempotence (la requête
+  concurrente rejoue le résultat), devis consommé une seule fois.
+- **Intégrité en fin de suite** : chaîne du registre, soldes recalculés,
+  balance par devise et chaîne d'audit revérifiés après tous les tests.
+- **Couverture** (`pnpm test:coverage`) : seuils bloquants en CI, rapport
+  HTML publié comme artefact.
+
 ## Commandes
 
 ```bash
@@ -261,6 +285,7 @@ cp .env.example .env     # puis remplir les clés locales
 pnpm dev                 # tsx watch
 pnpm typecheck && pnpm lint
 TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/transfertplus_api_test pnpm test
+TEST_DATABASE_URL=… pnpm test:coverage   # avec seuils de couverture
 pnpm build && pnpm start          # API
 pnpm start:worker                  # tâches de fond
 ```

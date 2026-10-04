@@ -111,7 +111,15 @@ jobs:
         run: pnpm --filter @transfertplus/api run typecheck
       - name: Lint
         run: pnpm --filter @transfertplus/api run lint
-      - name: Tests (unitaires, HTTP, intégration PostgreSQL)
-        run: pnpm --filter @transfertplus/api run test
+      - name: Tests (unitaires, propriétés, HTTP, sécurité, concurrence, intégration PostgreSQL) et couverture
+        run: pnpm --filter @transfertplus/api run test:coverage
+      - name: Rapport de couverture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage
+          path: platform/apps/api/coverage
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Compilation
         run: pnpm --filter @transfertplus/api run build
