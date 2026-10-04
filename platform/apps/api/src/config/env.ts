@@ -122,6 +122,10 @@ const rawEnvironmentSchema = z.object({
   // Nombre de proxys de confiance devant l'API (répartiteur de charge).
   // Détermine l'adresse IP client retenue pour la limitation de débit.
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // Métriques Prometheus (GET /metrics) sur un port interne distinct, jamais
+  // routé publiquement. Absent : pas de serveur de métriques.
+  METRICS_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  METRICS_HOST: z.string().default("127.0.0.1"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
@@ -290,6 +294,7 @@ export interface AppConfig {
     readonly port: number;
     readonly trustProxyHops: number;
   };
+  readonly metrics: { readonly host: string; readonly port: number } | undefined;
   readonly logLevel: RawEnvironment["LOG_LEVEL"];
   readonly database: {
     readonly url: string;
@@ -459,6 +464,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     }
   }
 
+  if (raw.METRICS_PORT !== undefined && raw.METRICS_PORT === raw.PORT) {
+    problems.push("METRICS_PORT doit différer de PORT : les métriques ne sont jamais servies par le port public");
+  }
   if ((raw.TSA_URL === undefined) !== (raw.TSA_TRUSTED_CERTS_PATH === undefined)) {
     problems.push("TSA_URL et TSA_TRUSTED_CERTS_PATH vont de pair");
   }
@@ -606,6 +614,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appVersion: raw.APP_VERSION,
     isProduction: raw.APP_ENV === "production",
     http: { host: raw.HOST, port: raw.PORT, trustProxyHops: raw.TRUST_PROXY_HOPS },
+    metrics: raw.METRICS_PORT === undefined ? undefined : { host: raw.METRICS_HOST, port: raw.METRICS_PORT },
     logLevel: raw.LOG_LEVEL,
     database: {
       url: raw.DATABASE_URL,

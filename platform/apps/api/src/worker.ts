@@ -1,3 +1,4 @@
+import type { Server } from "node:http";
 import { hostname } from "node:os";
 
 import { ConfigurationError, loadConfig } from "./config/env.js";
@@ -23,6 +24,9 @@ import { configuredKycProviders, createKycService } from "./modules/kyc/index.js
 import { registerKycWebhookHandlers } from "./modules/kyc/kyc.webhooks.js";
 import { configuredPaymentProviders, createPaymentStack } from "./modules/transfers/index.js";
 import { WebhookInbox } from "./modules/webhooks/webhookInbox.js";
+import { createMetricsRegistry, jobMetrics, startMetricsServer } from "./observability/metrics.js";
+import type { JobObserver } from "./observability/metrics.js";
+import { registerOperationalMetrics } from "./observability/operationalMetrics.js";
 
 /**
  * Processus de tâches de fond (séparé de l'API HTTP) : rapprochement
@@ -94,7 +98,21 @@ async function main(): Promise<void> {
     jobs.push(new ChainAnchorJob(pool, logger, new TimestampAuthorityClient(tsa.url, parsePemBundle(tsa.trustedCertsPem)), tsa.target, config.ledger.anchorIntervalMs));
   }
 
-  const scheduler = new JobScheduler(pool, logger, jobs);
+  // Métriques : tâches et indicateurs d'exploitation lus en base (le worker
+  // est l'unique exposant de ces derniers ; voir observability/).
+  let metricsServer: Server | null = null;
+  let observer: JobObserver | undefined;
+  if (config.metrics !== undefined) {
+    const registry = createMetricsRegistry("worker", config.appVersion);
+    observer = jobMetrics(registry, jobs);
+    registerOperationalMetrics(registry, pool);
+    metricsServer = await startMetricsServer(registry, config.metrics, (error) => {
+      logger.error({ err: error }, "collecte des métriques en échec");
+    });
+    logger.info({ port: config.metrics.port }, "métriques exposées");
+  }
+
+  const scheduler = new JobScheduler(pool, logger, jobs, observer);
   scheduler.start();
   logger.info({ workerId, jobs: jobs.map((job) => job.name) }, "worker démarré");
 
@@ -105,6 +123,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, "arrêt du worker demandé");
     const forceExit = setTimeout(() => process.exit(1), 60_000);
     forceExit.unref();
+    metricsServer?.close();
     scheduler
       .stop()
       .then(() => pool.end())

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Logger } from "pino";
 
 import type { DatabasePool } from "../db/pool.js";
+import type { JobObserver } from "../observability/metrics.js";
 
 /**
  * Planificateur de tâches de fond.
@@ -35,6 +36,7 @@ export class JobScheduler {
     private readonly pool: DatabasePool,
     private readonly logger: Logger,
     private readonly jobs: readonly Job[],
+    private readonly observer?: JobObserver,
   ) {
     const names = new Set(jobs.map((job) => job.name));
     if (names.size !== jobs.length) throw new Error("noms de tâches dupliqués");
@@ -66,6 +68,13 @@ export class JobScheduler {
   }
 
   private async execute(job: Job): Promise<JobOutcome> {
+    const startedAt = performance.now();
+    const outcome = await this.attempt(job);
+    this.observer?.observe(job.name, outcome, (performance.now() - startedAt) / 1000);
+    return outcome;
+  }
+
+  private async attempt(job: Job): Promise<JobOutcome> {
     const client = await this.pool.connect();
     const key = lockKey(job.name);
     let locked = false;

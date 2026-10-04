@@ -28,6 +28,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 14 | Déploiement : images distroless signées (SBOM, provenance, analyse bloquante), pile Compose durcie derrière Caddy, secrets générés, procédure d'exploitation | ✅ |
 | 15 | Mise en production : contrôle des comptes prestataires en lecture seule (identifiants, webhooks, environnement), publication mobile signée (Google Play, TestFlight), procédure d'ouverture sandbox puis live | ✅ |
 | 16 | Tests de bout en bout : Playwright sur une pile réelle (base, Redis, API, worker, site, back-office) ; inscription, TOTP, passkeys, clé de sécurité du personnel, quatre yeux, transfert remboursé, bénéficiaire sanctionné retenu ; job CI | ✅ |
+| 17 | Surveillance : métriques Prometheus de l'API et du worker (latences, tâches, registre, webhooks, outbox, transferts, conformité), 41 règles d'alerte testées (`promtool` et chaîne des journaux de bout en bout), Alertmanager (PagerDuty, Slack, veille externe), journaux centralisés (Alloy → Loki) avec alertes, tableau Grafana ; job CI | ✅ |
 
 ## Démarrage local
 
@@ -63,7 +64,8 @@ platform/
   packages/contracts/      contrat OpenAPI unique (types TS + client Dart)
   Dockerfile               images de production (api, migrate, web, admin)
   deploy/                  pile de production, Caddy, secrets, procédure d'exploitation,
-                           ouverture des comptes prestataires (PRESTATAIRES.md)
+                           ouverture des comptes prestataires (PRESTATAIRES.md),
+                           surveillance (monitoring/ : Prometheus, alertes, Loki, Grafana)
   docker-compose.yml       environnement local
   .env.example             variables (aucune valeur réelle)
 ```

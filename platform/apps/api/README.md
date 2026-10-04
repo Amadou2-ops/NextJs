@@ -256,6 +256,22 @@ l'API d'administration (phase 9).
   définitivement fermé après deux comptes ou la première invitation émise
   par un membre (migration 0024).
 
+## Métriques (`src/observability`)
+
+- `METRICS_PORT` (désactivées sans) et `METRICS_HOST` (défaut `127.0.0.1`) :
+  serveur interne distinct du port public (`METRICS_PORT` ≠ `PORT`, refusé au
+  démarrage sinon), `GET /metrics` seulement, 503 si la collecte échoue.
+- API : `transfertplus_http_request_duration_seconds{method,route,status_class}`
+  (route = motif Express, `unmatched` sinon : jamais l'URL reçue) et métriques
+  du processus Node.js (`transfertplus_process_*`, `transfertplus_nodejs_*`).
+- Worker : `transfertplus_job_*{task}` (exécutions, durées, dernier succès,
+  période) et indicateurs lus en base à chaque collecte
+  (`observability/operationalMetrics.ts`) : registre, listes de sanctions,
+  taux de change, webhooks, outbox, transferts, alertes LCB-FT, disjoncteurs.
+  Les événements datés sont des horodatages Unix, 0 pour « jamais ».
+- Règles d'alerte et exploitation : [`deploy/monitoring/`](../../deploy/monitoring),
+  [`deploy/README.md`](../../deploy/README.md#surveillance-et-alertes).
+
 ## Tests
 
 Base PostgreSQL réelle (recréée à chaque exécution, `TEST_DATABASE_URL`

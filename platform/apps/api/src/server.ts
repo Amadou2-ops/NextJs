@@ -16,6 +16,7 @@ import { createKycModule } from "./modules/kyc/index.js";
 import { createLedgerModule } from "./modules/ledger/index.js";
 import { createTransfersModule } from "./modules/transfers/index.js";
 import { WebhookInbox } from "./modules/webhooks/webhookInbox.js";
+import { createMetricsRegistry, httpMetrics, startMetricsServer } from "./observability/metrics.js";
 
 /**
  * Point d'entrée du processus : construit les ressources, démarre le serveur
@@ -142,9 +143,11 @@ async function main(): Promise<void> {
     },
   });
 
+  const metricsRegistry = config.metrics === undefined ? undefined : createMetricsRegistry("api", config.appVersion);
   const app = createApp({
     config,
     logger,
+    ...(metricsRegistry === undefined ? {} : { httpMetrics: httpMetrics(metricsRegistry) }),
     healthChecks: [
       { name: "postgres", check: () => checkDatabase(pool) },
       { name: "redis", check: () => checkRedis(redis) },
@@ -164,6 +167,13 @@ async function main(): Promise<void> {
   const server: Server = app.listen(config.http.port, config.http.host, () => {
     logger.info({ port: config.http.port, env: config.appEnv }, "API démarrée");
   });
+  const metricsServer =
+    metricsRegistry === undefined || config.metrics === undefined
+      ? null
+      : await startMetricsServer(metricsRegistry, config.metrics, (error) => {
+          logger.error({ err: error }, "collecte des métriques en échec");
+        });
+  if (metricsServer !== null) logger.info({ port: config.metrics?.port }, "métriques exposées");
   // Protection contre les clients lents (Slowloris) et connexions pendantes.
   server.headersTimeout = 15_000;
   server.requestTimeout = 30_000;
@@ -181,6 +191,7 @@ async function main(): Promise<void> {
     }, SHUTDOWN_TIMEOUT_MS);
     forceExit.unref();
 
+    metricsServer?.close();
     server.close((closeError) => {
       if (closeError !== undefined) logger.error({ err: closeError }, "erreur à la fermeture du serveur HTTP");
       Promise.allSettled([pool.end(), redis.quit()])

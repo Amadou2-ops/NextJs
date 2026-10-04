@@ -263,6 +263,60 @@ jobs:
             platform/e2e/.runtime/*.log
           retention-days: 14
 
+  monitoring:
+    name: Surveillance (règles d'alerte testées, Alertmanager, Loki, Alloy, Compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Versions des images de compose.production.yaml ; empreintes des archives officielles.
+      PROMETHEUS_VERSION: 3.5.0
+      PROMETHEUS_SHA256: e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a
+      ALERTMANAGER_VERSION: 0.28.1
+      ALERTMANAGER_SHA256: 5ac7ab5e4b8ee5ce4d8fb0988f9cb275efcc3f181b4b408179fafee121693311
+      LOKI_VERSION: 3.5.5
+      LOKI_SHA256: eefea8fd3701f2aae77ee7130be10973d51a33d9fa942075b8cefbf7f930868b
+      ALLOY_VERSION: 1.10.2
+      ALLOY_SHA256: 288e36c29710123f1f33dc074b84e9c19efeb975f4f638b8a39d2bd1a7ad1c0e
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils (archives vérifiées par empreinte)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dl" "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/dl"
+          fetch() { curl -fsSL --retry 3 -o "$1" "$2"; echo "$3  $1" | sha256sum -c -; }
+          fetch prometheus.tgz "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" "$PROMETHEUS_SHA256"
+          fetch alertmanager.tgz "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz" "$ALERTMANAGER_SHA256"
+          fetch loki.zip "https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}/loki-linux-amd64.zip" "$LOKI_SHA256"
+          fetch alloy.zip "https://github.com/grafana/alloy/releases/download/v${ALLOY_VERSION}/alloy-linux-amd64.zip" "$ALLOY_SHA256"
+          tar -xzf prometheus.tgz --strip-components=1 -C "$RUNNER_TEMP/bin" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          tar -xzf alertmanager.tgz --strip-components=1 -C "$RUNNER_TEMP/bin" "alertmanager-${ALERTMANAGER_VERSION}.linux-amd64/amtool"
+          unzip -q loki.zip && mv loki-linux-amd64 "$RUNNER_TEMP/bin/loki"
+          unzip -q alloy.zip && mv alloy-linux-amd64 "$RUNNER_TEMP/bin/alloy"
+          chmod +x "$RUNNER_TEMP/bin/"*
+      - name: Configurations, tests des règles d'alerte, tableau et chaîne des journaux
+        run: platform/deploy/monitoring/tests/verifier.sh "$RUNNER_TEMP/bin"
+      - name: Pile Compose de production valide
+        working-directory: platform/deploy
+        run: |
+          set -euo pipefail
+          # Fichiers factices : seule la structure est vérifiée ici.
+          for f in env/*.env.example; do cp "$f" "${f%.example}"; done
+          touch env/api.secrets.env env/web.secrets.env env/admin.secrets.env
+          touch secrets/supabase-ca.crt secrets/tsa-ca.pem secrets/alertmanager-slack-url \
+            secrets/alertmanager-pagerduty-key secrets/alertmanager-deadman-url secrets/grafana-admin-password
+          docker compose -f compose.production.yaml --env-file env/edge.env config -q
+          # Ports publiés sur l'hôte : Caddy seul en public ; Grafana sur 127.0.0.1 ; rien d'autre.
+          docker compose -f compose.production.yaml --env-file env/edge.env config --format json | python3 -c '
+          import json, sys
+          services = json.load(sys.stdin)["services"]
+          published = {(name, p.get("host_ip", ""), str(p["published"])) for name, svc in services.items() for p in svc.get("ports", [])}
+          expected = {("caddy", "", "80"), ("caddy", "", "443"), ("grafana", "127.0.0.1", "3300")}
+          if published != expected:
+              sys.exit(f"ports publiés inattendus : {sorted(published - expected)} ; manquants : {sorted(expected - published)}")
+          '
+
+
   mobile:
     name: Application mobile (analyse, tests, build Android)
     runs-on: ubuntu-24.04

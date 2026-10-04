@@ -1,7 +1,7 @@
 import "./types/express-augmentation.js";
 
 import express from "express";
-import type { Express, Request } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import type { Logger } from "pino";
 import { pinoHttp } from "pino-http";
 import type { RateLimiterAbstract } from "rate-limiter-flexible";
@@ -37,6 +37,8 @@ export interface AppDependencies {
   readonly healthChecks: readonly HealthCheck[];
   readonly globalRateLimiter: RateLimiterAbstract;
   readonly mountRoutes?: (app: Express) => void;
+  /** Mesure des requêtes (histogramme Prometheus), placée avant toute autre couche. */
+  readonly httpMetrics?: RequestHandler;
 }
 
 export function createApp(deps: AppDependencies): Express {
@@ -47,6 +49,7 @@ export function createApp(deps: AppDependencies): Express {
   app.set("trust proxy", deps.config.http.trustProxyHops);
   app.set("query parser", "simple");
 
+  if (deps.httpMetrics !== undefined) app.use(deps.httpMetrics);
   app.use(requestId());
   app.use(
     pinoHttp({

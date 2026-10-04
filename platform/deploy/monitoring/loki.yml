@@ -1,0 +1,68 @@
+# Loki TransfertPlus — journaux de tous les conteneurs de la pile, collectés
+# par Alloy (alloy.alloy). Instance unique, stockage sur volume local,
+# réseau interne « monitoring » seulement : pas d'authentification multi-
+# locataire (locataire unique « fake », imposé par Loki dans ce mode).
+#
+# Les journaux de l'API sont déjà expurgés à la source (pino, REDACTED_PATHS :
+# secrets, identité, coordonnées) ; leur rétention est bornée à 30 jours. La
+# piste d'audit à valeur probante reste le journal chaîné en base.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: "2026-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 720h
+  max_query_lookback: 720h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_label_names_per_series: 10
+  allow_structured_metadata: true
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem
+
+# Règles d'alerte sur les journaux (loki-rules/fake/), notifiées par Alertmanager.
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /etc/loki/rules
+  rule_path: /loki/ruler
+  alertmanager_url: http://alertmanager:9093
+  evaluation_interval: 1m
+  ring:
+    kvstore:
+      store: inmemory
+
+analytics:
+  reporting_enabled: false
