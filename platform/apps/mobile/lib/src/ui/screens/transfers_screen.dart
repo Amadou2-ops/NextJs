@@ -97,6 +97,17 @@ class _TransfersTabState extends State<TransfersTab> {
 class TransferDetailScreen extends StatelessWidget {
   const TransferDetailScreen({super.key, required this.transferId});
 
+  /// Statuts dont l'issue dépend du serveur (paiement, envoi, remboursement).
+  static const _inFlight = {
+    TransferStatus.fundingProcessing,
+    TransferStatus.funded,
+    TransferStatus.complianceReview,
+    TransferStatus.payoutPending,
+    TransferStatus.payoutProcessing,
+    TransferStatus.payoutFailed,
+    TransferStatus.refundPending,
+  };
+
   final String transferId;
 
   @override
@@ -106,6 +117,8 @@ class TransferDetailScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Transfert')),
       body: Loader<Transfer>(
         load: () => services.transfers.get(transferId),
+        // Suivi en direct tant que le traitement se poursuit côté serveur.
+        refreshWhile: (transfer) => _inFlight.contains(transfer.status),
         builder: (context, transfer, reload) => RefreshIndicator(
           onRefresh: reload,
           child: ListView(

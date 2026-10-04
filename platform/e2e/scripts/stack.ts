@@ -12,6 +12,7 @@ import pg from "pg";
 
 import { CONTEXT_FILE, RUNTIME_DIR } from "../support/context.js";
 import type { E2EContext, Founder } from "../support/context.js";
+import { configureDemoCorridors, watchDemo } from "../support/demo.js";
 import { startMobileControl } from "../support/mobileControl.js";
 import { TestSecureElement } from "../support/secureElement.js";
 
@@ -35,6 +36,10 @@ import { TestSecureElement } from "../support/secureElement.js";
  * accepte l'autorité App Attest de TEST de la pile (développement seulement).
  * Binaire Flutter : E2E_FLUTTER (défaut : `flutter`).
  *
+ * E2E_SUITE=demo (`pnpm demo`) : même pile, laissée démarrée pour un essai
+ * dans le navigateur jusqu'à Ctrl+C (voir support/demo.ts), avec en plus les
+ * corridors États-Unis → Niger et États-Unis → Mauritanie.
+ *
  * Aucun prestataire n'est simulé côté API : sans route de paiement sortant
  * configurée, un transfert financé est remboursé (comportement de production).
  *
@@ -53,7 +58,7 @@ const LISTS_PORT = 8099;
 const MOBILE_CONTROL_PORT = 8098;
 const APP_ATTEST_APP_ID = "EQUIPE1234.com.transfertplus.app";
 const SUITE = process.env["E2E_SUITE"] ?? "web";
-if (SUITE !== "web" && SUITE !== "mobile") throw new Error(`E2E_SUITE inconnue : ${SUITE} (web ou mobile)`);
+if (SUITE !== "web" && SUITE !== "mobile" && SUITE !== "demo") throw new Error(`E2E_SUITE inconnue : ${SUITE} (web, mobile ou demo)`);
 const PII_KEY_ID = "pii-e2e-1";
 
 const postgresUrl = (process.env["E2E_POSTGRES_URL"] ?? "postgres://postgres:postgres@127.0.0.1:5432").replace(/\/+$/, "");
@@ -248,8 +253,8 @@ async function bootstrapFounder(email: string, name: string, enrollmentUrl: stri
 async function main(): Promise<number> {
   rmSync(RUNTIME_DIR, { recursive: true, force: true });
   mkdirSync(RUNTIME_DIR, { recursive: true });
-  const webStandalone = SUITE === "web" ? prepareStandalone("web") : null;
-  const adminStandalone = SUITE === "web" ? prepareStandalone("admin") : null;
+  const webStandalone = SUITE === "mobile" ? null : prepareStandalone("web");
+  const adminStandalone = SUITE === "mobile" ? null : prepareStandalone("admin");
   // Autorité App Attest de test : l'API ne l'accepte qu'en développement.
   const secureElement = await TestSecureElement.create(APP_ATTEST_APP_ID);
   const attestRootPath = join(RUNTIME_DIR, "app-attest-test-root.pem");
@@ -257,6 +262,10 @@ async function main(): Promise<number> {
 
   step(`base ${DATABASE} : migrations, données de référence, corridor FR → SN`);
   await resetDatabase();
+  if (SUITE === "demo") {
+    step("corridors de démonstration : États-Unis → Niger et Mauritanie");
+    await configureDemoCorridors(ownerDatabaseUrl);
+  }
   step("Redis : limiteurs remis à zéro");
   await flushRedis(redisUrl);
 
@@ -351,6 +360,8 @@ async function main(): Promise<number> {
   await waitFor(`${webUrl}/`, "site client", webLog);
   await waitFor(`${adminUrl}/connexion`, "back-office", adminLog);
 
+  if (SUITE === "demo") return demo(context, [apiLogFile, workerLog]);
+
   step("Playwright");
   const playwright = spawn(process.execPath, [join(E2E_ROOT, "node_modules", "@playwright", "test", "cli.js"), "test", ...process.argv.slice(2)], {
     cwd: E2E_ROOT,
@@ -361,6 +372,42 @@ async function main(): Promise<number> {
     playwright.on("exit", (code) => {
       resolve(code ?? 1);
     });
+  });
+}
+
+/** Pile laissée démarrée jusqu'à Ctrl+C ; liens et SMS affichés dans la console. */
+function demo(context: E2EContext, logFiles: readonly string[]): Promise<number> {
+  const [a, b] = context.founders;
+  process.stdout.write(`
+════════════════════════════════════════════════════════════════════════
+ TransfertPlus — démonstration locale (Ctrl+C pour arrêter)
+
+ Site client   : ${context.webUrl}
+ Back-office   : ${context.adminUrl}
+
+ Créez un compte sur le site : le code SMS s'affiche ici. L'identité est
+ approuvée et deux portefeuilles (USD, EUR) sont crédités automatiquement
+ (simulation des services externes, démonstration uniquement).
+
+ Back-office — activez les deux comptes fondateurs (clé de sécurité ou
+ Windows Hello / Touch ID requis) :
+   ${a.name} : ${a.enrollmentUrl}
+   ${b.name} : ${b.enrollmentUrl}
+
+ Aucun prestataire de paiement n'est branché : un transfert est financé par
+ le portefeuille puis remboursé automatiquement.
+════════════════════════════════════════════════════════════════════════
+`);
+  const controller = new AbortController();
+  watchDemo(logFiles, controller.signal);
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      controller.abort();
+      process.stdout.write("\nArrêt de la démonstration…\n");
+      resolve(0);
+    };
+    process.once("SIGINT", finish);
+    process.once("SIGTERM", finish);
   });
 }
 

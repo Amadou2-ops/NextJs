@@ -90,6 +90,29 @@ describe("bénéficiaires", () => {
       .set("Authorization", `Bearer ${customer.token}`)
       .send({ country: "SN", currency: "XOF", firstName: "Moussa", lastName: "Ndiaye", account: { kind: "mobile_money", msisdn: "+33612345678", operator: "wave" } });
     expect(foreign.status).toBe(400);
+    // Opérateurs nationaux : refusés hors de leur pays, acceptés dans leur pays.
+    const misplaced = await request(app)
+      .post("/v1/recipients")
+      .set("Authorization", `Bearer ${customer.token}`)
+      .send({ country: "SN", currency: "XOF", firstName: "Moussa", lastName: "Ndiaye", account: { kind: "mobile_money", msisdn: "+221771234599", operator: "mynita" } });
+    expect(misplaced.status).toBe(400);
+    await owner.query("UPDATE ref.countries SET can_receive = true WHERE alpha2 = 'NE'");
+    try {
+      const niger = await request(app)
+        .post("/v1/recipients")
+        .set("Authorization", `Bearer ${customer.token}`)
+        .send({ country: "NE", currency: "XOF", firstName: "Aïchatou", lastName: "Issoufou", account: { kind: "mobile_money", msisdn: "+22790123456", operator: "mynita" } });
+      expect(niger.status).toBe(201);
+      expect(niger.body).toMatchObject({ country: "NE", mobileOperator: "mynita", displayHint: "•••• 3456 · MyNita" });
+      const wave = await request(app)
+        .post("/v1/recipients")
+        .set("Authorization", `Bearer ${customer.token}`)
+        .send({ country: "NE", currency: "XOF", firstName: "Aïchatou", lastName: "Issoufou", account: { kind: "mobile_money", msisdn: "+22790123457", operator: "wave" } });
+      expect(wave.status).toBe(400);
+      expect((await request(app).delete(`/v1/recipients/${niger.body.id as string}`).set("Authorization", `Bearer ${customer.token}`)).status).toBe(204);
+    } finally {
+      await owner.query("UPDATE ref.countries SET can_receive = false WHERE alpha2 = 'NE'");
+    }
     const closed = await request(app)
       .post("/v1/recipients")
       .set("Authorization", `Bearer ${customer.token}`)

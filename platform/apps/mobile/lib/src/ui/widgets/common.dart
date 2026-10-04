@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api/api_exception.dart';
@@ -76,21 +79,59 @@ class BusyButton extends StatelessWidget {
 }
 
 /// Chargement asynchrone avec gestion d'erreur et nouvel essai.
+///
+/// [refreshWhile] : tant qu'il renvoie vrai pour la dernière valeur chargée,
+/// la valeur est relue toutes les [refreshEvery] sans masquer l'écran (suivi
+/// d'une opération en cours côté serveur). Une relecture en échec garde la
+/// dernière valeur affichée et sera retentée au tour suivant.
 class Loader<T> extends StatefulWidget {
-  const Loader({super.key, required this.load, required this.builder});
+  const Loader({super.key, required this.load, required this.builder, this.refreshWhile, this.refreshEvery = const Duration(seconds: 3)});
 
   final Future<T> Function() load;
   final Widget Function(BuildContext context, T value, Future<void> Function() reload) builder;
+  final bool Function(T value)? refreshWhile;
+  final Duration refreshEvery;
 
   @override
   State<Loader<T>> createState() => _LoaderState<T>();
 }
 
 class _LoaderState<T> extends State<Loader<T>> {
-  late Future<T> _future = widget.load();
+  late Future<T> _future = _track(widget.load());
+  Timer? _refresh;
+
+  /// Programme la relecture suivante si la valeur chargée l'exige.
+  Future<T> _track(Future<T> future) {
+    _refresh?.cancel();
+    _refresh = null;
+    unawaited(future.then(_schedule, onError: (Object _) {}));
+    return future;
+  }
+
+  void _schedule(T value) {
+    final refreshWhile = widget.refreshWhile;
+    if (!mounted || refreshWhile == null || !refreshWhile(value)) return;
+    _refresh?.cancel();
+    _refresh = Timer(widget.refreshEvery, _silentRefresh);
+  }
+
+  Future<void> _silentRefresh() async {
+    final T value;
+    try {
+      value = await widget.load();
+    } on Object {
+      if (mounted) _refresh = Timer(widget.refreshEvery, _silentRefresh);
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _future = SynchronousFuture<T>(value);
+    });
+    _schedule(value);
+  }
 
   Future<void> _reload() async {
-    final next = widget.load();
+    final next = _track(widget.load());
     // Bloc explicite : un setState dont la fonction renvoie un Future est refusé.
     setState(() {
       _future = next;
@@ -100,6 +141,12 @@ class _LoaderState<T> extends State<Loader<T>> {
     } on Object {
       // Affiché par le FutureBuilder.
     }
+  }
+
+  @override
+  void dispose() {
+    _refresh?.cancel();
+    super.dispose();
   }
 
   @override

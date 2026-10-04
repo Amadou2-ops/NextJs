@@ -79,3 +79,10 @@ Tout passe par le vrai code, sauf ce que des services externes fourniraient :
   - `signIn` se reconnecte seulement si la session a expiré.
 - Codes TOTP : `freshTotp` attend la période suivante si besoin, car l'API refuse le rejeu d'un code.
 - Sélecteurs : rôles, libellés et textes visibles, pas de classes CSS sauf pour un badge de statut. Les montants s'écrivent avec des espaces insécables : utiliser `\s` dans les expressions régulières.
+
+## Démonstration locale
+
+`pnpm demo` (racine de `platform/`) démarre la même pile en mode `E2E_SUITE=demo` et
+la laisse ouverte jusqu'à Ctrl+C : voir `support/demo.ts` et le README de
+`platform/`. Les simulations de services externes (SMS affichés, décision KYC,
+portefeuilles crédités) n'existent que dans ce script de démonstration.

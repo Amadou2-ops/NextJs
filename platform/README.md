@@ -35,6 +35,43 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 21 | Mot de passe oublié (API, site, application mobile) : code SMS, application d'authentification exigée si activée, réponse identique pour un numéro inconnu, toutes les sessions fermées, avis de sécurité par SMS (migration 0028) ; E2E du site | ✅ |
 | 22 | Clôture du compte par le client (site et application mobile, exigée par les magasins d'applications) : mot de passe ressaisi, session renforcée, signature d'appareil ; refusée tant qu'un solde est non nul ou qu'un transfert est en cours ; tous les accès révoqués, clôture définitive garantie par la base, données conservées pour la durée légale (migration 0029) ; E2E du site | ✅ |
 
+## Démonstration sur votre ordinateur (`pnpm demo`)
+
+Toute la plateforme (base, API, worker, site client, back-office) démarre sur
+votre ordinateur, avec des clés générées à chaque lancement, et reste ouverte
+jusqu'à Ctrl+C. Fonctionne sous Windows (PowerShell), macOS et Linux.
+
+Prérequis : [Node.js 22](https://nodejs.org) (version « 22 LTS »),
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) démarré, puis
+`npm install -g pnpm@10`.
+
+```bash
+cd platform
+docker compose up -d      # PostgreSQL et Redis (une fois par session)
+pnpm install              # première fois seulement
+pnpm demo                 # construit le site et le back-office, puis démarre tout
+```
+
+Ensuite :
+
+- **Site client** : http://localhost:3000 — créez un compte (pays de résidence
+  États-Unis pour envoyer en dollars). Le code SMS s'affiche dans la console.
+- **Simulations de démonstration** (annoncées dans la console) : identité
+  approuvée et portefeuilles USD et EUR crédités de 1 000,00 dès l'inscription.
+- **Envoi** : activez d'abord une application d'authentification (Google
+  Authenticator…) dans *Sécurité* ; elle confirme chaque envoi depuis le site.
+  Corridors ouverts : France → Sénégal, États-Unis → Niger (MyNita, Zamani Cash,
+  Airtel, Moov) et États-Unis → Mauritanie (Bankily, Masrvi, Sedad, Click).
+  Aucun prestataire de paiement n'étant branché, le transfert est financé par
+  le portefeuille puis remboursé automatiquement.
+- **Back-office** : http://localhost:3001 — ouvrez les deux liens d'activation
+  des fondateurs affichés dans la console (clé de sécurité, Windows Hello ou
+  Touch ID).
+
+Chaque lancement repart d'une base de démonstration neuve (`transfertplus_e2e`).
+Sous Windows, si la construction échoue sur des liens symboliques (`EPERM`),
+activez le *mode développeur* de Windows ou lancez la démo depuis WSL.
+
 ## Démarrage local
 
 Prérequis : Node.js 22, pnpm 10, Docker.

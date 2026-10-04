@@ -50,7 +50,7 @@ function respond(response: ServerResponse, status: number, body?: Json): void {
 }
 
 /** Crédit du portefeuille par l'exploitant (compte de dotation → portefeuille du client). */
-async function creditWallet(userId: string, currency: string, amountMinor: string): Promise<void> {
+export async function creditWallet(userId: string, currency: string, amountMinor: string): Promise<void> {
   if (!/^[1-9]\d{0,14}$/.test(amountMinor)) throw new Error("montant invalide");
   const equity = await equityAccount(currency);
   await withOwner(async (client) => {
