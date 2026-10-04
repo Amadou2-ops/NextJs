@@ -68,3 +68,17 @@ du dépôt suit le `AGENTS.md` racine).
   pas perdre la valeur.
 - Aucun script, style ni hôte tiers : la CSP n'autorise que `'self'` et le nonce.
 - Avant de livrer : `pnpm --filter @transfertplus/admin typecheck`, `lint`, `test`, `build`.
+
+## Application mobile (`apps/mobile`)
+
+- Flutter (Dart strict : `strict-casts`, `strict-inference`, `strict-raw-types`).
+  Avant de livrer : `flutter analyze --fatal-infos` et `flutter test`.
+- Les dossiers `android/` et `ios/` sont du code source (canal natif
+  `com.transfertplus/device_security`) : ils sont versionnés.
+- Toute route que l'API protège par `requireDeviceSignature` est appelée avec
+  `signed: true`. Ne jamais modifier le message canonique sans mettre à jour
+  les vecteurs de `test/signing_test.dart` (générés depuis le code de l'API).
+- Montants : `Money` (chaîne en unités mineures) et `lib/src/core/format/money.dart` ;
+  jamais de `double` pour de l'argent.
+- Aucun secret en clair hors du stockage sécurisé ; aucun repli logiciel si
+  la Secure Enclave, le Keystore ou l'attestation sont indisponibles.

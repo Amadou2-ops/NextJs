@@ -189,3 +189,47 @@ jobs:
         run: pnpm --filter @transfertplus/admin run test
       - name: Build de production
         run: pnpm --filter @transfertplus/admin run build
+
+  mobile:
+    name: Application mobile (analyse, tests, build Android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: platform/apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Analyse statique stricte
+        run: flutter analyze --fatal-infos
+      - name: Tests (signature canonique vérifiée contre les vecteurs de l'API)
+        run: flutter test
+      - name: Build Android (compile le canal natif Keystore / Play Integrity)
+        run: flutter build apk --debug --dart-define=API_BASE_URL=https://api.transfertplus.example
+
+  mobile-ios:
+    name: Application mobile (build iOS)
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: platform/apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Build iOS sans signature (compile le canal Secure Enclave / App Attest)
+        run: flutter build ios --debug --no-codesign --dart-define=API_BASE_URL=https://api.transfertplus.example
