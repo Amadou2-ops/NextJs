@@ -123,3 +123,36 @@ jobs:
           retention-days: 14
       - name: Compilation
         run: pnpm --filter @transfertplus/api run build
+
+  web:
+    name: Site client (typage, lint, tests, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: platform
+    env:
+      # Valeurs factices : le build ne contacte aucun service.
+      API_BASE_URL: http://127.0.0.1:8080
+      APP_ORIGIN: https://app.transfertplus.example
+      SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict
+        run: pnpm --filter @transfertplus/web run typecheck
+      - name: Lint
+        run: pnpm --filter @transfertplus/web run lint
+      - name: Tests du serveur intermédiaire (BFF)
+        run: pnpm --filter @transfertplus/web run test
+      - name: Build de production
+        run: pnpm --filter @transfertplus/web run build

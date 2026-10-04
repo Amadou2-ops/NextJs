@@ -22,7 +22,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 8 | AML : listes OFAC / ONU / PEP versionnées, criblage, 11 règles, mise en revue garantie par la base | ✅ |
 | 9 | API d'administration : personnel (mot de passe + clé WebAuthn), RBAC, double validation exécutée par l'approbateur, conformité, audit | ✅ |
 | 10 | Tests de l'API : propriétés, parité avec PostgreSQL, matrice d'autorisation de toutes les routes, concurrence, intégrité en fin de suite, couverture bloquante | ✅ |
-| 11 | Site web client (Next.js, BFF) | à venir |
+| 11 | Site client Next.js 16 : BFF détenant les jetons, session chiffrée, CSP à nonce, parcours d'envoi, paiement, KYC, sécurité | ✅ |
 | 12 | Dashboard admin (Next.js, WebAuthn) | à venir |
 | 13 | Application mobile Flutter | à venir |
 | 14 | Déploiement et exploitation | à venir |
@@ -54,10 +54,12 @@ platform/
     src/                   CLI : migrate | status | verify | seed | test
     tests/                 fixtures, tests SQL, test de concurrence
   apps/api/                @transfertplus/api — API Express (TypeScript)
+  apps/web/                @transfertplus/web — site client Next.js 16 (BFF)
   packages/contracts/      contrat OpenAPI unique (types TS + client Dart)
   docker-compose.yml       environnement local
   .env.example             variables (aucune valeur réelle)
 ```
 
 Voir [`db/README.md`](db/README.md) pour la conception du registre et
-[`apps/api/README.md`](apps/api/README.md) pour l'architecture de l'API.
+[`apps/api/README.md`](apps/api/README.md) pour l'architecture de l'API,
+[`apps/web/README.md`](apps/web/README.md) pour le site client.

@@ -37,3 +37,19 @@ du dépôt suit le `AGENTS.md` racine).
   (un test vérifie la couverture des routes du module d'authentification).
 - Avant de livrer : `pnpm --filter @transfertplus/api typecheck`, `lint`, `test`
   (`TEST_DATABASE_URL` vers une base `*_test`).
+
+## Site client (`apps/web`)
+
+- Next.js 16 (App Router, `src/proxy.ts` remplace le middleware). Le navigateur
+  ne détient jamais de jeton de l'API : uniquement le cookie chiffré
+  `__Host-tp_session` (JWE). Tout appel à l'API se fait côté serveur
+  (`src/server/*`, marqués `server-only`).
+- Mutations : actions serveur + `useActionState`, entrée lue par `parseForm`
+  (schéma Zod strict), erreurs via `fromError` (jamais de détail technique).
+  Ne jamais renvoyer un champ secret au navigateur (`SECRET_FIELDS`).
+- Redirections : uniquement des chemins internes (`safeNextPath`) ; URL de
+  paiement externe uniquement via `trustedPaymentUrl`.
+- Montants : chaînes en unités mineures, conversion via `src/lib/format.ts`.
+- Aucun script ou style inline hors nonce CSP ; nouvel hôte tiers = l'ajouter
+  à `contentSecurityPolicy` (`src/proxy.ts`).
+- Avant de livrer : `pnpm --filter @transfertplus/web typecheck`, `lint`, `test`, `build`.
