@@ -1,0 +1,69 @@
+# Alertmanager TransfertPlus.
+#
+# Destinations (fichiers secrets montés en lecture seule, jamais dans ce dépôt) :
+#   - /run/secrets/alertmanager-slack-url        : webhook entrant Slack du canal d'exploitation ;
+#   - /run/secrets/alertmanager-pagerduty-key    : clé d'intégration PagerDuty (Events API v2) de l'astreinte ;
+#   - /run/secrets/alertmanager-deadman-url      : URL de veille externe (homme mort), appelée
+#                                                  toutes les 5 min par l'alerte VeilleAlertes.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: exploitation
+  group_by: [alertname, severity, team]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: veille
+      matchers: [alertname = "VeilleAlertes"]
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+    - receiver: astreinte
+      matchers: [severity = "critical"]
+      repeat_interval: 1h
+    - receiver: conformite
+      matchers: [team = "conformite"]
+
+# Une alerte critique masque sa variante d'avertissement (même nom, même cible).
+inhibit_rules:
+  - source_matchers: [severity = "critical"]
+    target_matchers: [severity = "warning"]
+    equal: [alertname, instance, source, status, provider]
+  # Cible injoignable : ses indicateurs ne sont plus fiables.
+  - source_matchers: [alertname = "CibleInjoignable"]
+    target_matchers: [alertname =~ "TacheSansSucces|BoucleEvenementsSaturee"]
+    equal: [instance]
+
+receivers:
+  - name: exploitation
+    slack_configs:
+      - api_url_file: /run/secrets/alertmanager-slack-url
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+        text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}{{ "\n" }}{{ end }}'
+
+  - name: conformite
+    slack_configs:
+      - api_url_file: /run/secrets/alertmanager-slack-url
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}⚖️{{ else }}✅{{ end }} Conformité : {{ .CommonLabels.alertname }}'
+        text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}{{ "\n" }}{{ end }}'
+
+  - name: astreinte
+    pagerduty_configs:
+      - routing_key_file: /run/secrets/alertmanager-pagerduty-key
+        send_resolved: true
+        severity: critical
+        description: '{{ .CommonLabels.alertname }} : {{ .CommonAnnotations.summary }}'
+    slack_configs:
+      - api_url_file: /run/secrets/alertmanager-slack-url
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}🚨 ASTREINTE{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}'
+        text: '{{ range .Alerts }}• {{ .Annotations.summary }}{{ if .Annotations.description }} — {{ .Annotations.description }}{{ end }}{{ "\n" }}{{ end }}'
+
+  - name: veille
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager-deadman-url
+        send_resolved: false

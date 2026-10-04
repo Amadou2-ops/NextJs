@@ -1,0 +1,104 @@
+"use server";
+
+import type { PublicKeyCredentialCreationOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
+import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
+import { z } from "@/lib/zod";
+import type { ActionState } from "@/server/actionState";
+import { failure, fromError, parseForm } from "@/server/actionState";
+import { actionApi, clearCookie } from "@/server/context";
+import { PENDING_COOKIE, SESSION_COOKIE } from "@/server/session";
+
+/** Sécurité du compte : sessions, application d'authentification (TOTP), passkeys, clôture. */
+
+export async function revokeSessionAction(sessionId: string): Promise<ActionState> {
+  if (!z.uuid().safeParse(sessionId).success) return failure("Session introuvable.");
+  try {
+    await actionApi({ method: "DELETE", path: `/v1/auth/sessions/${sessionId}` });
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+  revalidatePath("/securite");
+  return { status: "success", data: undefined };
+}
+
+export async function revokeOtherSessionsAction(): Promise<ActionState<number>> {
+  try {
+    const result = await actionApi<{ revoked: number }>({ method: "POST", path: "/v1/auth/sessions/revoke-others" });
+    revalidatePath("/securite");
+    return { status: "success", data: result.revoked };
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+}
+
+export async function startTotpAction(): Promise<ActionState<{ readonly secret: string; readonly otpauthUri: string }>> {
+  try {
+    return { status: "success", data: await actionApi<{ secret: string; otpauthUri: string }>({ method: "POST", path: "/v1/auth/mfa/totp/setup" }) };
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+}
+
+const code = z.string().regex(/^\d{6}$/, "Code à 6 chiffres");
+
+export async function confirmTotpAction(value: string): Promise<ActionState> {
+  if (!code.safeParse(value).success) return failure("Saisissez le code à 6 chiffres.");
+  try {
+    await actionApi({ method: "POST", path: "/v1/auth/mfa/totp/confirm", body: { code: value } });
+    return { status: "success", data: undefined };
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+}
+
+export async function disableTotpAction(value: string): Promise<ActionState> {
+  if (!code.safeParse(value).success) return failure("Saisissez le code à 6 chiffres.");
+  try {
+    await actionApi({ method: "POST", path: "/v1/auth/mfa/totp/disable", body: { code: value } });
+    return { status: "success", data: undefined };
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+}
+
+export async function passkeyRegistrationOptionsAction(): Promise<ActionState<{ readonly challengeId: string; readonly options: PublicKeyCredentialCreationOptionsJSON }>> {
+  try {
+    return { status: "success", data: await actionApi({ method: "POST", path: "/v1/auth/passkeys/registration/options" }) };
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+}
+
+export async function passkeyRegistrationVerifyAction(challengeId: string, response: RegistrationResponseJSON, nickname: string): Promise<ActionState> {
+  if (!z.uuid().safeParse(challengeId).success) return failure("Défi invalide.");
+  const label = nickname.trim().slice(0, 60);
+  try {
+    await actionApi({ method: "POST", path: "/v1/auth/passkeys/registration/verify", body: { challengeId, response, ...(label.length > 0 ? { nickname: label } : {}) } });
+    return { status: "success", data: undefined };
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+}
+
+const closureSchema = z.strictObject({
+  password: z.string().min(1, "Mot de passe requis").max(128),
+  confirmation: z.literal("oui", "Cochez la case pour confirmer la clôture"),
+});
+
+/** Clôture définitive du compte (soldes nuls, aucun transfert en cours) ; la session du navigateur est effacée. */
+export async function closeAccountAction(_previous: ActionState, form: FormData): Promise<ActionState> {
+  const parsed = parseForm(closureSchema, form);
+  if (!parsed.ok) return parsed.state;
+  try {
+    await actionApi({ method: "POST", path: "/v1/auth/account/close", body: { password: parsed.data.password } });
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+  const store = await cookies();
+  clearCookie(store, SESSION_COOKIE);
+  clearCookie(store, PENDING_COOKIE);
+  redirect("/compte-cloture");
+}

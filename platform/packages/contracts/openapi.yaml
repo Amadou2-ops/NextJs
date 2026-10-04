@@ -1,0 +1,3024 @@
+openapi: 3.1.0
+info:
+  title: TransfertPlus API
+  version: 0.1.0
+  description: |
+    API unique servant l'application mobile (Flutter), le site web client et le
+    dashboard d'administration (Next.js).
+
+    Conventions non négociables :
+    - Montants : chaînes d'entiers en unités mineures de la devise
+      (`"10000"` EUR = 100,00 €). Jamais de nombre décimal.
+    - Toute requête mutatrice exige l'en-tête `Idempotency-Key` (16 à 128
+      caractères `[A-Za-z0-9_-]`).
+    - Erreurs au format RFC 9457 (`application/problem+json`) avec un `code`
+      métier stable.
+
+    Ce document est complété module par module (authentification, registre,
+    change, KYC, transferts, AML, administration) selon la feuille de route.
+servers:
+  - url: https://api.transfertplus.example/v1
+    description: Production
+  - url: https://api.staging.transfertplus.example/v1
+    description: Staging (sandbox prestataires)
+security:
+  - mobileBearer: []
+  - webSession: []
+tags:
+  - name: system
+  - name: auth
+    description: Inscription, connexion, sessions, appareils, double authentification
+  - name: wallets
+    description: Portefeuilles et relevés du client
+  - name: admin-ledger
+    description: Registre côté personnel (consultation ; gel, ajustement, contre-passation en double validation)
+  - name: admin-auth
+    description: Enrôlement et connexion du personnel (mot de passe + clé WebAuthn matérielle)
+  - name: admin-customers
+    description: Fiches clients, données personnelles tracées, suspension
+  - name: admin-transfers
+    description: Revue des transferts, mise en revue, libération, remboursement ordonné
+  - name: admin-kyc
+    description: Revue manuelle des vérifications d'identité
+  - name: admin-aml
+    description: Alertes, dossiers d'enquête, déclarations de soupçon
+  - name: admin-approvals
+    description: Double validation (règle des quatre yeux)
+  - name: admin-staff
+    description: Personnel, rôles et réseaux autorisés
+  - name: admin-audit
+    description: Journal d'audit chaîné
+  - name: admin-configuration
+    description: Paramétrage (marges, barèmes, corridors, encaissement, prestataires, pays) ; modifications en double validation, écrites à l'identique de la demande approuvée
+  - name: fx
+    description: Simulation de transfert et devis garantis (taux, frais, montant reçu)
+  - name: kyc
+    description: Vérification d'identité (niveaux, sessions de capture Onfido / Smile ID)
+  - name: recipients
+    description: Bénéficiaires du client (coordonnées chiffrées)
+  - name: transfers
+    description: Transferts, financement, suivi et annulation
+  - name: webhooks
+    description: Notifications signées des prestataires (jamais appelées par les clients)
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: État de santé (sans authentification)
+      security: []
+      responses:
+        "200":
+          description: Service opérationnel
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, version]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  version:
+                    type: string
+        "503":
+          $ref: "#/components/responses/Problem"
+  /.well-known/jwks.json:
+    get:
+      tags: [system]
+      operationId: getJwks
+      summary: Clés publiques de vérification des jetons d'accès (EdDSA)
+      security: []
+      responses:
+        "200":
+          description: Jeu de clés JWK publiques
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Jwks"
+  /auth/device-challenges:
+    post:
+      tags: [auth]
+      operationId: createDeviceChallenge
+      summary: Défi serveur à intégrer à l'attestation d'un nouvel appareil mobile
+      security: []
+      responses:
+        "201":
+          description: Défi à usage unique (5 minutes)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, challenge, expiresAt]
+                properties:
+                  challengeId: { type: string, format: uuid }
+                  challenge: { type: string, description: "32 octets en base64url" }
+                  expiresAt: { type: string, format: date-time }
+        "429":
+          $ref: "#/components/responses/Problem"
+  /auth/registration/start:
+    post:
+      tags: [auth]
+      operationId: startRegistration
+      summary: Envoie un code SMS au numéro (réponse identique si le numéro est déjà inscrit)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone: { type: string, example: "+221 77 123 45 67" }
+                countryHint: { $ref: "#/components/schemas/CountryCode" }
+                locale: { type: string, default: fr }
+      responses:
+        "202":
+          description: Code envoyé
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationChallenge"
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /auth/registration/complete:
+    post:
+      tags: [auth]
+      operationId: completeRegistration
+      summary: Vérifie le code SMS, crée le compte et ouvre une session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, code, phone, password, countryOfResidence, client]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { $ref: "#/components/schemas/OtpCode" }
+                phone: { type: string }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                countryOfResidence: { $ref: "#/components/schemas/CountryCode" }
+                preferredLocale: { type: string, default: fr }
+                client: { $ref: "#/components/schemas/ClientDescriptor" }
+      responses:
+        "201":
+          description: Compte créé, session ouverte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /auth/password-reset/start:
+    post:
+      tags: [auth]
+      operationId: startPasswordReset
+      summary: Envoie un code de réinitialisation par SMS (réponse identique pour un numéro sans compte actif, aucun SMS envoyé)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone: { type: string, example: "+221 77 123 45 67" }
+                countryHint: { $ref: "#/components/schemas/CountryCode" }
+                locale: { type: string, default: fr }
+      responses:
+        "202":
+          description: Demande enregistrée
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationChallenge"
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /auth/password-reset/complete:
+    post:
+      tags: [auth]
+      operationId: completePasswordReset
+      summary: Vérifie le code SMS (et le code TOTP si l'application d'authentification est activée), remplace le mot de passe et ferme toutes les sessions
+      description: |
+        Le code SMS est consommé dès qu'il est juste, même si la suite échoue
+        (TOTP absent ou faux : `401 TOTP_REQUIRED`) ; un nouveau code doit
+        alors être demandé. Le titulaire est prévenu par SMS.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, code, phone, password]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { $ref: "#/components/schemas/OtpCode" }
+                phone: { type: string }
+                countryHint: { $ref: "#/components/schemas/CountryCode" }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                totpCode: { $ref: "#/components/schemas/OtpCode" }
+      responses:
+        "204": { description: Mot de passe remplacé, sessions fermées }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: startLogin
+      summary: Vérifie le mot de passe ; connexion directe sur appareil de confiance signé, sinon second facteur
+      description: |
+        Appareil mobile déjà enregistré (`client.deviceId`) : la requête DOIT
+        porter les en-têtes de signature d'appareil.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceSignature"
+        - $ref: "#/components/parameters/DeviceSignatureTimestamp"
+        - $ref: "#/components/parameters/DeviceCounter"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone, password, client]
+              properties:
+                phone: { type: string }
+                password: { type: string }
+                client: { $ref: "#/components/schemas/ClientDescriptor" }
+      responses:
+        "200":
+          description: Session ouverte ou second facteur requis
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AuthenticatedSession"
+                  - $ref: "#/components/schemas/SecondFactorRequired"
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+  /auth/login/verify:
+    post:
+      tags: [auth]
+      operationId: completeLogin
+      summary: Valide le second facteur (code SMS ou TOTP)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [loginChallengeId, code]
+              properties:
+                loginChallengeId: { type: string, format: uuid }
+                code: { $ref: "#/components/schemas/OtpCode" }
+      responses:
+        "200":
+          description: Session ouverte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+  /auth/token/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Échange un jeton de renouvellement (usage unique, rotation)
+      description: |
+        Session mobile : la requête DOIT être signée par l'appareil. La
+        réutilisation d'un jeton déjà échangé révoque toute la session.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceSignature"
+        - $ref: "#/components/parameters/DeviceSignatureTimestamp"
+        - $ref: "#/components/parameters/DeviceCounter"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, pattern: "^rt_[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200":
+          description: Nouveaux jetons
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Révoque la session courante
+      responses:
+        "204": { description: Session révoquée }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/sessions:
+    get:
+      tags: [auth]
+      operationId: listSessions
+      summary: Sessions actives du client
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SessionSummary" }
+  /auth/sessions/{sessionId}:
+    delete:
+      tags: [auth]
+      operationId: revokeSession
+      summary: Révoque une session (niveau d'assurance 2 requis)
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Session révoquée }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /auth/sessions/revoke-others:
+    post:
+      tags: [auth]
+      operationId: revokeOtherSessions
+      summary: Révoque toutes les autres sessions
+      responses:
+        "200":
+          description: Nombre de sessions révoquées
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked: { type: integer, minimum: 0 }
+  /auth/account/close:
+    post:
+      tags: [auth]
+      operationId: closeAccount
+      summary: Clôture définitive du compte par son titulaire (soldes nuls, aucun transfert en cours)
+      description: |
+        Session de niveau 2, requête signée par l'appareil sur mobile, mot de
+        passe ressaisi. Tous les accès sont révoqués ; les données sont
+        conservées pour la durée légale (LCB-FT). `409 ACCOUNT_CLOSURE_BLOCKED`
+        tant qu'un solde est non nul ou qu'un transfert est en cours.
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceSignature"
+        - $ref: "#/components/parameters/DeviceSignatureTimestamp"
+        - $ref: "#/components/parameters/DeviceCounter"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password]
+              properties:
+                password: { type: string, maxLength: 128 }
+      responses:
+        "204": { description: Compte clôturé, accès révoqués }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+  /auth/devices:
+    get:
+      tags: [auth]
+      operationId: listDevices
+      summary: Appareils de confiance du client
+      responses:
+        "200":
+          description: Appareils
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeviceSummary" }
+  /auth/devices/{deviceId}:
+    delete:
+      tags: [auth]
+      operationId: revokeDevice
+      summary: Révoque un appareil et toutes ses sessions
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Appareil révoqué }
+        "404": { $ref: "#/components/responses/Problem" }
+  /auth/mfa/totp/setup:
+    post:
+      tags: [auth]
+      operationId: startTotpEnrollment
+      summary: Génère un secret TOTP (actif après confirmation)
+      responses:
+        "201":
+          description: Secret à scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauthUri]
+                properties:
+                  secret: { type: string, description: "Base32" }
+                  otpauthUri: { type: string }
+        "409": { $ref: "#/components/responses/Problem" }
+  /auth/mfa/totp/confirm:
+    post:
+      tags: [auth]
+      operationId: confirmTotpEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TotpCodeRequest" }
+      responses:
+        "204": { description: Double authentification activée }
+        "422": { $ref: "#/components/responses/Problem" }
+  /auth/mfa/totp/disable:
+    post:
+      tags: [auth]
+      operationId: disableTotp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TotpCodeRequest" }
+      responses:
+        "204": { description: Double authentification désactivée }
+        "422": { $ref: "#/components/responses/Problem" }
+  /auth/passkeys/registration/options:
+    post:
+      tags: [auth]
+      operationId: passkeyRegistrationOptions
+      summary: Options WebAuthn d'enregistrement (session web, niveau 2)
+      responses:
+        "201":
+          description: Options PublicKeyCredentialCreationOptionsJSON
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, options]
+                properties:
+                  challengeId: { type: string, format: uuid }
+                  options: { type: object }
+  /auth/passkeys/registration/verify:
+    post:
+      tags: [auth]
+      operationId: passkeyRegistrationVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, response]
+              properties:
+                challengeId: { type: string, format: uuid }
+                nickname: { type: string, maxLength: 60 }
+                response: { type: object, description: "RegistrationResponseJSON" }
+      responses:
+        "201":
+          description: Passkey enregistrée
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentialId]
+                properties:
+                  credentialId: { type: string }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/passkeys/authentication/options:
+    post:
+      tags: [auth]
+      operationId: passkeyAuthenticationOptions
+      security: []
+      responses:
+        "201":
+          description: Options PublicKeyCredentialRequestOptionsJSON
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challengeId, options]
+                properties:
+                  challengeId: { type: string, format: uuid }
+                  options: { type: object }
+  /auth/passkeys/authentication/verify:
+    post:
+      tags: [auth]
+      operationId: passkeyAuthenticationVerify
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, response]
+              properties:
+                challengeId: { type: string, format: uuid }
+                response: { type: object, description: "AuthenticationResponseJSON" }
+      responses:
+        "200":
+          description: Session web ouverte
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthenticatedSession" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+  /wallets:
+    get:
+      tags: [wallets]
+      operationId: listWallets
+      summary: Soldes disponibles et réservés par devise
+      responses:
+        "200":
+          description: Portefeuilles du client
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wallets]
+                properties:
+                  wallets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Wallet" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [wallets]
+      operationId: openWallet
+      summary: Ouvre (idempotent) un portefeuille dans une devise proposée
+      description: "Session mobile : requête signée par l'appareil."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [currency]
+              properties:
+                currency: { $ref: "#/components/schemas/CurrencyCode" }
+      responses:
+        "201":
+          description: Portefeuille ouvert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Wallet" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /wallets/{currency}/statement:
+    get:
+      tags: [wallets]
+      operationId: walletStatement
+      summary: Relevé du portefeuille, du plus récent au plus ancien
+      parameters:
+        - { name: currency, in: path, required: true, schema: { $ref: "#/components/schemas/CurrencyCode" } }
+        - { name: before, in: query, required: false, description: "Curseur nextCursor de la page précédente", schema: { type: string, pattern: "^[1-9][0-9]{0,17}$" } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: Écritures du portefeuille
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, nextCursor]
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/StatementEntry" }
+                  nextCursor: { type: [string, "null"] }
+        "404": { $ref: "#/components/responses/Problem" }
+  /admin/ledger/accounts/{accountId}:
+    get:
+      tags: [admin-ledger]
+      operationId: adminGetLedgerAccount
+      summary: Compte du registre et son solde (permission ledger:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Compte, content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /admin/ledger/accounts/{accountId}/entries:
+    get:
+      tags: [admin-ledger]
+      operationId: adminListLedgerEntries
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: before, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        "200": { description: Écritures, content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Problem" }
+  /admin/ledger/journals/{journalId}:
+    get:
+      tags: [admin-ledger]
+      operationId: adminGetLedgerJournal
+      summary: Journal, empreintes chaînées et écritures
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: journalId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Journal, content: { application/json: { schema: { type: object } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+  /admin/ledger/trial-balance:
+    get:
+      tags: [admin-ledger]
+      operationId: adminTrialBalance
+      summary: Balance générale par devise
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: Balance générale, content: { application/json: { schema: { type: object } } } }
+  /admin/ledger/integrity:
+    get:
+      tags: [admin-ledger]
+      operationId: adminLedgerIntegrity
+      summary: Tête de chaîne, dernier rapprochement et dernier ancrage externe
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: État d'intégrité, content: { application/json: { schema: { type: object } } } }
+  /fx/estimate:
+    get:
+      tags: [fx]
+      operationId: estimateTransfer
+      summary: Simulation publique d'un transfert (calculateur du site web)
+      description: |
+        Non authentifiée, limitée par adresse IP. Le résultat n'engage pas :
+        seul un devis (`POST /quotes`) fige le taux et les frais.
+      security: []
+      parameters:
+        - { name: sourceCountry, in: query, required: true, schema: { $ref: "#/components/schemas/CountryCode" } }
+        - { name: destinationCountry, in: query, required: true, schema: { $ref: "#/components/schemas/CountryCode" } }
+        - { name: sourceCurrency, in: query, required: true, schema: { $ref: "#/components/schemas/CurrencyCode" } }
+        - { name: destinationCurrency, in: query, required: true, schema: { $ref: "#/components/schemas/CurrencyCode" } }
+        - { name: payoutMethod, in: query, required: true, schema: { $ref: "#/components/schemas/PayoutMethod" } }
+        - { name: fundingMethod, in: query, required: false, schema: { $ref: "#/components/schemas/FundingMethod" } }
+        - { name: amount, in: query, required: true, schema: { $ref: "#/components/schemas/PositiveMinorUnits" } }
+        - { name: amountType, in: query, required: false, schema: { $ref: "#/components/schemas/AmountType" } }
+      responses:
+        "200":
+          description: Simulation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /quotes:
+    post:
+      tags: [fx]
+      operationId: createQuote
+      summary: Devis garanti pour le client connecté
+      description: |
+        Le pays d'envoi est le pays de résidence du client. Le devis fige le
+        taux, la marge, les frais et le mode de financement ; il est valable
+        `expiresAt` et ne peut être consommé que par un seul transfert.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuoteRequest" }
+      responses:
+        "201":
+          description: Devis enregistré
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /quotes/{quoteId}:
+    get:
+      tags: [fx]
+      operationId: getQuote
+      summary: Consultation d'un devis du client
+      parameters:
+        - { name: quoteId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Devis
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Quote"
+                  - type: object
+                    required: [consumed]
+                    properties:
+                      consumed: { type: boolean }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /kyc:
+    get:
+      tags: [kyc]
+      operationId: getKycOverview
+      summary: Niveau KYC, plafonds associés et vérifications du client
+      responses:
+        "200":
+          description: Situation KYC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycOverview" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /kyc/verifications:
+    post:
+      tags: [kyc]
+      operationId: startKycVerification
+      summary: Ouvre une session de capture chez le prestataire choisi pour le pays de résidence
+      description: |
+        Session mobile : requête signée par l'appareil. L'identité déclarée
+        (telle qu'elle figure sur la pièce) est exigée à la première
+        vérification et figée ensuite. Relancer l'ouverture remplace une
+        session non terminée. Niveau 3 : vigilance renforcée, décidée par la
+        conformité (pas en libre-service).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartKycVerificationRequest" }
+      responses:
+        "201":
+          description: Session ouverte
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [verification, launch]
+                properties:
+                  verification: { $ref: "#/components/schemas/KycVerification" }
+                  launch: { $ref: "#/components/schemas/KycSdkLaunch" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /kyc/verifications/{verificationId}:
+    get:
+      tags: [kyc]
+      operationId: getKycVerification
+      summary: État d'une vérification du client
+      parameters:
+        - { name: verificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Vérification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycVerification" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /kyc/verifications/{verificationId}/submitted:
+    post:
+      tags: [kyc]
+      operationId: markKycVerificationSubmitted
+      summary: Signale la fin de la capture dans le SDK (indicatif, la décision vient du prestataire)
+      description: "Session mobile : requête signée par l'appareil."
+      parameters:
+        - { name: verificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Vérification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KycVerification" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /webhooks/onfido:
+    post:
+      tags: [webhooks]
+      operationId: onfidoWebhook
+      summary: Événements Onfido (workflow_run.completed)
+      description: |
+        Authentification : en-tête `X-SHA2-Signature` = hex(HMAC-SHA256(jeton
+        du webhook, corps brut)). Le résultat est ensuite relu auprès d'Onfido.
+      security: []
+      parameters:
+        - { name: X-SHA2-Signature, in: header, required: true, schema: { type: string, pattern: "^[0-9a-fA-F]{64}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /webhooks/smile-id:
+    post:
+      tags: [webhooks]
+      operationId: smileIdWebhook
+      summary: Rappels de résultat Smile ID
+      description: |
+        Authentification : champs `signature` et `timestamp` du corps (schéma
+        de signature Smile ID), horodatage dans la fenêtre de tolérance. Le
+        résultat est ensuite relu par job_status.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [signature, timestamp, PartnerParams] }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /recipients:
+    get:
+      tags: [recipients]
+      operationId: listRecipients
+      summary: Bénéficiaires actifs du client
+      responses:
+        "200":
+          description: Bénéficiaires
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recipients]
+                properties:
+                  recipients:
+                    type: array
+                    items: { $ref: "#/components/schemas/Recipient" }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [recipients]
+      operationId: createRecipient
+      summary: Enregistre un bénéficiaire (coordonnées chiffrées, jamais modifiées ensuite)
+      description: "Session mobile : requête signée par l'appareil."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRecipientRequest" }
+      responses:
+        "201":
+          description: Bénéficiaire enregistré
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recipient" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /recipients/{recipientId}:
+    delete:
+      tags: [recipients]
+      operationId: archiveRecipient
+      summary: Archive un bénéficiaire (l'historique des transferts est conservé)
+      parameters:
+        - { name: recipientId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Bénéficiaire archivé }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /transfers:
+    get:
+      tags: [transfers]
+      operationId: listTransfers
+      summary: Transferts du client, du plus récent au plus ancien
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: before, in: query, required: false, description: "Curseur nextCursor de la page précédente", schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Transferts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transfers, nextCursor]
+                properties:
+                  transfers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Transfer" }
+                  nextCursor: { type: [string, "null"], format: date-time }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [transfers]
+      operationId: createTransfer
+      summary: Crée un transfert à partir d'un devis garanti
+      description: |
+        En-tête Idempotency-Key obligatoire (rejeu : même transfert, statut
+        200). Autorisation renforcée : session mobile signée par l'appareil,
+        ou code TOTP (`totpCode`) pour une session web. Financement par le
+        portefeuille : réservation immédiate. Financement externe : la
+        réponse contient l'action de paiement (`funding`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTransferRequest" }
+      responses:
+        "200":
+          description: Requête rejouée (même transfert)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedTransfer" }
+        "201":
+          description: Transfert créé
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedTransfer" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /transfers/{transferId}:
+    get:
+      tags: [transfers]
+      operationId: getTransfer
+      summary: Détail d'un transfert et historique des statuts
+      parameters:
+        - { name: transferId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Transfert
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Transfer"
+                  - type: object
+                    required: [history]
+                    properties:
+                      history:
+                        type: array
+                        items:
+                          type: object
+                          required: [status, at]
+                          properties:
+                            status: { $ref: "#/components/schemas/TransferStatus" }
+                            at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /transfers/{transferId}/funding:
+    get:
+      tags: [transfers]
+      operationId: getTransferFunding
+      summary: Action de paiement à jour pour un transfert en attente de financement
+      parameters:
+        - { name: transferId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Action de paiement
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [funding]
+                properties:
+                  funding: { $ref: "#/components/schemas/FundingAction" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /transfers/{transferId}/cancel:
+    post:
+      tags: [transfers]
+      operationId: cancelTransfer
+      summary: Annule un transfert non encore payé au bénéficiaire (remboursement si déjà financé)
+      description: "Session mobile : requête signée par l'appareil."
+      parameters:
+        - { name: transferId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Transfert annulé ou remboursé
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Transfer" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /webhooks/stripe:
+    post:
+      tags: [webhooks]
+      operationId: stripeWebhook
+      summary: Événements Stripe (PaymentIntent, remboursements, litiges)
+      description: "En-tête Stripe-Signature (t=…,v1=HMAC-SHA256), tolérance 5 minutes."
+      security: []
+      parameters:
+        - { name: Stripe-Signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /webhooks/flutterwave:
+    post:
+      tags: [webhooks]
+      operationId: flutterwaveWebhook
+      summary: Événements Flutterwave (charge.completed, transfer.completed)
+      description: "En-tête verif-hash (secret partagé) ; l'état est relu chez Flutterwave."
+      security: []
+      parameters:
+        - { name: verif-hash, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /webhooks/thunes:
+    post:
+      tags: [webhooks]
+      operationId: thunesWebhook
+      summary: Rappels de statut Thunes
+      description: "Liste blanche d'adresses facultative ; la transaction est toujours relue chez Thunes."
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [external_id] }
+      responses:
+        "200": { $ref: "#/components/responses/WebhookReceived" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /admin/auth/enrollment/options:
+    post:
+      tags: [admin-auth]
+      operationId: adminEnrollmentOptions
+      summary: Options WebAuthn d'enrôlement (invitation à usage unique)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [invitationToken]
+              properties:
+                invitationToken: { type: string, pattern: "^inv_[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200": { description: "Défi et options de création de clé", content: { application/json: { schema: { type: object } } } }
+  /admin/auth/enrollment/complete:
+    post:
+      tags: [admin-auth]
+      operationId: adminEnrollmentComplete
+      summary: "Activation du compte : mot de passe (14 caractères minimum) et clé matérielle"
+      description: |
+        Les passkeys synchronisées (drapeau BE) sont refusées : la clé doit rester liée
+        à un authentificateur physique. Le jeton d'invitation est consommé.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [invitationToken, challengeId, password, response]
+              properties:
+                invitationToken: { type: string }
+                challengeId: { type: string, format: uuid }
+                password: { type: string, minLength: 14, maxLength: 128 }
+                nickname: { type: string, maxLength: 60 }
+                response: { type: object, description: "Réponse WebAuthn du navigateur (PublicKeyCredential JSON)" }
+      responses:
+        "201": { description: "Compte activé", content: { application/json: { schema: { type: object } } } }
+  /admin/auth/login:
+    post:
+      tags: [admin-auth]
+      operationId: adminLogin
+      summary: "Connexion, étape 1 : mot de passe (réseau autorisé, verrouillage après 5 échecs)"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, maxLength: 128 }
+      responses:
+        "200": { description: "Défi WebAuthn lié au compte et à l'adresse IP", content: { application/json: { schema: { type: object } } } }
+  /admin/auth/login/verify:
+    post:
+      tags: [admin-auth]
+      operationId: adminLoginVerify
+      summary: "Connexion, étape 2 : assertion de la clé matérielle"
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, response]
+              properties:
+                challengeId: { type: string, format: uuid }
+                response: { type: object, description: "Réponse WebAuthn du navigateur (PublicKeyCredential JSON)" }
+      responses:
+        "200": { description: "Session ouverte", content: { application/json: { schema: { $ref: "#/components/schemas/AdminTokens" } } } }
+  /admin/auth/token/refresh:
+    post:
+      tags: [admin-auth]
+      operationId: adminTokenRefresh
+      summary: Renouvellement (jeton à usage unique ; réutilisation = session révoquée)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, pattern: "^art_[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200": { description: "Nouveaux jetons", content: { application/json: { schema: { $ref: "#/components/schemas/AdminTokens" } } } }
+  /admin/auth/logout:
+    post:
+      tags: [admin-auth]
+      operationId: adminLogout
+      summary: Déconnexion (session révoquée)
+      security:
+        - adminBearer: []
+      responses:
+        "204": { description: Session fermée }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/me:
+    get:
+      tags: [admin-auth]
+      operationId: adminMe
+      summary: Profil, rôles et permissions effectives
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers:
+    get:
+      tags: [admin-customers]
+      operationId: adminSearchCustomers
+      summary: Recherche exacte (numéro client, identifiant, téléphone E.164, e-mail)
+      description: |
+        customers:read. Aucune donnée personnelle en clair dans la réponse.
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 254 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending_verification, active, suspended, closed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers/{id}:
+    get:
+      tags: [admin-customers]
+      operationId: adminCustomerDetail
+      summary: "Fiche client : KYC, profil de risque, soldes, alertes, dossiers"
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers/{id}/pii:
+    post:
+      tags: [admin-customers]
+      operationId: adminRevealCustomerPii
+      summary: Données personnelles déchiffrées (customers:read_pii, tracé)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/customers/{id}/status:
+    post:
+      tags: [admin-customers]
+      operationId: adminSetCustomerStatus
+      summary: Suspension (sessions révoquées) ou rétablissement (customers:suspend)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status: { type: string, enum: [suspended, active] }
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers:
+    get:
+      tags: [admin-transfers]
+      operationId: adminListTransfers
+      summary: File des transferts (transfers:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/TransferStatus" } }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+        - { name: reference, in: query, schema: { type: string } }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}:
+    get:
+      tags: [admin-transfers]
+      operationId: adminTransferDetail
+      summary: "Détail : historique, tentatives, écritures, alertes, évaluation AML"
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}/hold:
+    post:
+      tags: [admin-transfers]
+      operationId: adminHoldTransfer
+      summary: Mise en revue manuelle (transfers:hold) avant tout paiement sortant
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}/release:
+    post:
+      tags: [admin-transfers]
+      operationId: adminReleaseTransfer
+      summary: Libération après levée humaine des alertes bloquantes (transfers:release)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/transfers/{id}/refund-requests:
+    post:
+      tags: [admin-transfers]
+      operationId: adminRequestTransferRefund
+      summary: Demande de remboursement ordonné (double validation, transfers:refund)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason, justification]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/kyc/reviews:
+    get:
+      tags: [admin-kyc]
+      operationId: adminKycQueue
+      summary: File de revue manuelle (kyc:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/kyc/verifications/{id}:
+    get:
+      tags: [admin-kyc]
+      operationId: adminKycDetail
+      summary: Vérification, preuve d'identité et historique
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: reveal, in: query, schema: { type: string, enum: [identity] }, description: "Déchiffre la pièce (customers:read_pii, tracé)" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/kyc/verifications/{id}/decision:
+    post:
+      tags: [admin-kyc]
+      operationId: adminKycDecision
+      summary: Décision manuelle (kyc:decide) ; le niveau est relevé par la base
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, note]
+              properties:
+                decision: { type: string, enum: [approve, reject, resubmission_required] }
+                reasons: { type: array, maxItems: 10, items: { type: string, pattern: "^[a-z][a-z0-9_]{2,63}$" } }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts:
+    get:
+      tags: [admin-aml]
+      operationId: adminListAlerts
+      summary: Alertes ouvertes par sévérité (aml:alerts:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, under_review, escalated, closed_false_positive, closed_confirmed] } }
+        - { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
+        - { name: mine, in: query, schema: { type: string, enum: ["true", "false"] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}:
+    get:
+      tags: [admin-aml]
+      operationId: adminAlertDetail
+      summary: Alerte et criblage associé (versions de listes, correspondances)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}/assign:
+    post:
+      tags: [admin-aml]
+      operationId: adminAssignAlert
+      summary: Prise en charge (aml:alerts:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}/escalate:
+    post:
+      tags: [admin-aml]
+      operationId: adminEscalateAlert
+      summary: Escalade
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/alerts/{id}/resolve:
+    post:
+      tags: [admin-aml]
+      operationId: adminResolveAlert
+      summary: Clôture humaine (faux positif ou confirmée ; sanction confirmée = client gelé)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome, note]
+              properties:
+                outcome: { type: string, enum: [false_positive, confirmed] }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases:
+    get:
+      tags: [admin-aml]
+      operationId: adminListCases
+      summary: Dossiers d'enquête
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, investigating, sar_filed, closed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin-aml]
+      operationId: adminOpenCase
+      summary: Ouverture d'un dossier (aml:cases:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId, summary]
+              properties:
+                userId: { type: string, format: uuid }
+                summary: { type: string, minLength: 10, maxLength: 5000 }
+                alertIds: { type: array, maxItems: 100, items: { type: string, format: uuid } }
+      responses:
+        "201": { description: "Dossier ouvert", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}:
+    get:
+      tags: [admin-aml]
+      operationId: adminCaseDetail
+      summary: Dossier et alertes rattachées
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}/alerts:
+    post:
+      tags: [admin-aml]
+      operationId: adminLinkCaseAlerts
+      summary: Rattachement d'alertes du même client
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [alertIds]
+              properties:
+                alertIds: { type: array, minItems: 1, maxItems: 100, items: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}/status:
+    post:
+      tags: [admin-aml]
+      operationId: adminTransitionCase
+      summary: Instruction ou clôture
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, note]
+              properties:
+                status: { type: string, enum: [investigating, closed] }
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/aml/cases/{id}/sar-requests:
+    post:
+      tags: [admin-aml]
+      operationId: adminRequestSar
+      summary: Déclaration de soupçon (double validation, aml:sar:file)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sarReference, justification]
+              properties:
+                sarReference: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9/_.-]{2,99}$" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/ledger/accounts/{id}/status-requests:
+    post:
+      tags: [admin-ledger]
+      operationId: adminRequestAccountStatus
+      summary: Gel ou dégel d'un compte (double validation, ledger:freeze)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason, justification]
+              properties:
+                status: { type: string, enum: [frozen, active] }
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/ledger/adjustment-requests:
+    post:
+      tags: [admin-ledger]
+      operationId: adminRequestAdjustment
+      summary: Écriture d'ajustement équilibrée (double validation, ledger:adjust)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [description, entries, justification]
+              properties:
+                description: { type: string, minLength: 10, maxLength: 500 }
+                entries: { type: array, minItems: 2, maxItems: 20, items: { type: object, additionalProperties: false, required: [accountId, direction, amountMinor, currency], properties: { accountId: { type: string, format: uuid }, direction: { type: string, enum: [debit, credit] }, amountMinor: { $ref: "#/components/schemas/PositiveMinorUnits" }, currency: { $ref: "#/components/schemas/CurrencyCode" } } } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/ledger/journals/{id}/reversal-requests:
+    post:
+      tags: [admin-ledger]
+      operationId: adminRequestReversal
+      summary: Contre-passation d'un journal (double validation, ledger:adjust)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason, justification]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals:
+    get:
+      tags: [admin-approvals]
+      operationId: adminListApprovals
+      summary: Demandes de double validation (approvals:decide)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, expired, executed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals/{id}:
+    get:
+      tags: [admin-approvals]
+      operationId: adminApprovalDetail
+      summary: Demande
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals/{id}/approve:
+    post:
+      tags: [admin-approvals]
+      operationId: adminApprove
+      summary: Approbation ET exécution par l'approbateur (jamais le demandeur)
+      description: |
+        L'approbateur doit détenir approvals:decide et la permission de l'action. La base
+        vérifie la demande approuvée, sa cible et l'identité de l'exécutant.
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/approvals/{id}/reject:
+    post:
+      tags: [admin-approvals]
+      operationId: adminReject
+      summary: Refus motivé
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff:
+    get:
+      tags: [admin-staff]
+      operationId: adminListStaff
+      summary: Personnel (admins:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [invited, active, suspended, disabled] } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/invitations:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestInvitation
+      summary: Invitation (double validation) ; le lien d'enrôlement est remis à l'approbateur
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, fullName, roles, allowedIpRanges, justification]
+              properties:
+                email: { type: string, format: email }
+                fullName: { type: string, minLength: 2, maxLength: 120 }
+                roles: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, enum: [support, risk_manager, super_admin] } }
+                allowedIpRanges: { type: array, minItems: 1, maxItems: 10, items: { type: string, description: "Plage CIDR (IPv4 /16 à /32, IPv6 /32 à /128)" } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}:
+    get:
+      tags: [admin-staff]
+      operationId: adminStaffDetail
+      summary: Membre du personnel
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/role-requests:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestRoles
+      summary: Attribution de rôles (double validation)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [roles, justification]
+              properties:
+                roles: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string, enum: [support, risk_manager, super_admin] } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/network-requests:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestNetwork
+      summary: Plages d'adresses autorisées (double validation)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [allowedIpRanges, justification]
+              properties:
+                allowedIpRanges: { type: array, minItems: 1, maxItems: 10, items: { type: string, description: "Plage CIDR (IPv4 /16 à /32, IPv6 /32 à /128)" } }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/reactivation-requests:
+    post:
+      tags: [admin-staff]
+      operationId: adminRequestReactivation
+      summary: Levée d'une suspension (double validation)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/restriction:
+    post:
+      tags: [admin-staff]
+      operationId: adminRestrictStaff
+      summary: Suspension ou désactivation immédiate (sessions et clés révoquées)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status: { type: string, enum: [suspended, disabled] }
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/roles/{role}:
+    delete:
+      tags: [admin-staff]
+      operationId: adminRevokeRole
+      summary: Retrait d'un rôle (immédiat, jamais sur soi-même)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: role, in: path, required: true, schema: { type: string, enum: [support, risk_manager, super_admin] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/staff/{id}/invitation:
+    post:
+      tags: [admin-staff]
+      operationId: adminRenewInvitation
+      summary: Nouvelle invitation pour un compte encore invité
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/audit/events:
+    get:
+      tags: [admin-audit]
+      operationId: adminAuditEvents
+      summary: Journal d'audit chaîné (audit:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: actorId, in: query, schema: { type: string } }
+        - { name: targetType, in: query, schema: { type: string } }
+        - { name: targetId, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: before, in: query, schema: { type: string, pattern: "^[1-9][0-9]{0,18}$" } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/audit/integrity:
+    get:
+      tags: [admin-audit]
+      operationId: adminAuditIntegrity
+      summary: Vérification complète de la chaîne d'empreintes
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/pricing-rules:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPricingRules
+      summary: Marges de change (configuration:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [current, all], default: current }, description: "current : règles en vigueur ou programmées ; all : historique (500 au plus)" }
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/pricing-rule-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPricingRule
+      summary: Nouvelle marge, éventuellement en remplacement d'une autre (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [marginBps, justification]
+              properties:
+                sourceCurrency: { anyOf: [{ $ref: "#/components/schemas/CurrencyCode" }, { type: "null" }], default: null }
+                destinationCurrency: { anyOf: [{ $ref: "#/components/schemas/CurrencyCode" }, { type: "null" }], default: null }
+                marginBps: { type: integer, minimum: 0, maximum: 1500 }
+                priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+                validFrom: { type: [string, "null"], format: date-time, default: null, description: "null : effet à l'exécution ; sinon dans les 90 jours" }
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                replacesRuleId: { type: [string, "null"], format: uuid, default: null, description: "Marge du même périmètre close à la date d'effet" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/pricing-rules/{id}/closure-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPricingRuleClosure
+      summary: Clôture d'une marge (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/fee-schedules:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListFeeSchedules
+      summary: Barèmes de frais (configuration:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [current, all], default: current }, description: "current : règles en vigueur ou programmées ; all : historique (500 au plus)" }
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/fee-schedule-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestFeeSchedule
+      summary: Nouveau barème de frais (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourceCurrency, fixedFee, percentageBps, minFee, justification]
+              properties:
+                sourceCountry: { anyOf: [{ $ref: "#/components/schemas/CountryCode" }, { type: "null" }], default: null }
+                destinationCountry: { anyOf: [{ $ref: "#/components/schemas/CountryCode" }, { type: "null" }], default: null }
+                sourceCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                destinationCurrency: { anyOf: [{ $ref: "#/components/schemas/CurrencyCode" }, { type: "null" }], default: null }
+                payoutMethod: { anyOf: [{ $ref: "#/components/schemas/PayoutMethod" }, { type: "null" }], default: null }
+                fundingMethod: { anyOf: [{ type: string, enum: [wallet_balance, card, bank_transfer, mobile_money, apple_pay, google_pay] }, { type: "null" }], default: null }
+                fixedFee: { $ref: "#/components/schemas/MinorUnits" }
+                percentageBps: { type: integer, minimum: 0, maximum: 1000 }
+                minFee: { $ref: "#/components/schemas/MinorUnits" }
+                maxFee: { anyOf: [{ $ref: "#/components/schemas/MinorUnits" }, { type: "null" }], default: null }
+                priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+                validFrom: { type: [string, "null"], format: date-time, default: null }
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                replacesScheduleId: { type: [string, "null"], format: uuid, default: null }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/fee-schedules/{id}/closure-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestFeeScheduleClosure
+      summary: Clôture d'un barème (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payout-corridors:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPayoutCorridors
+      summary: Corridors de paiement sortant (configuration:read)
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/payout-corridor-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayoutCorridor
+      summary: Nouveau corridor (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [destinationCountry, destinationCurrency, payoutMethod, provider, priority, minAmount, maxAmount, costFixed, costBps, estimatedDeliveryMinutes, isEnabled, justification]
+              properties:
+                sourceCountry: { anyOf: [{ $ref: "#/components/schemas/CountryCode" }, { type: "null" }], default: null }
+                destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+                destinationCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+                provider: { type: string, enum: [stripe, flutterwave, thunes] }
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                estimatedDeliveryMinutes: { type: integer, minimum: 0, maximum: 20160 }
+                isEnabled: { type: boolean }
+                providerRouteCode: { type: [string, "null"], pattern: "^[A-Za-z0-9_-]{1,40}$", default: null, description: "Code du payeur chez le prestataire (obligatoire pour Thunes)" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payout-corridors/{id}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayoutCorridorChange
+      summary: Modification des paramètres d'un corridor (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [priority, minAmount, maxAmount, costFixed, costBps, estimatedDeliveryMinutes, isEnabled, justification]
+              properties:
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                estimatedDeliveryMinutes: { type: integer, minimum: 0, maximum: 20160 }
+                isEnabled: { type: boolean }
+                providerRouteCode: { type: [string, "null"], pattern: "^[A-Za-z0-9_-]{1,40}$", default: null, description: "Code du payeur chez le prestataire (obligatoire pour Thunes)" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payin-methods:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPayinMethods
+      summary: Moyens d'encaissement (configuration:read)
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/payin-method-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayinMethod
+      summary: Nouveau moyen d'encaissement (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [country, currency, fundingMethod, provider, priority, minAmount, maxAmount, costFixed, costBps, isEnabled, justification]
+              properties:
+                country: { $ref: "#/components/schemas/CountryCode" }
+                currency: { $ref: "#/components/schemas/CurrencyCode" }
+                fundingMethod: { type: string, enum: [card, bank_transfer, mobile_money, apple_pay, google_pay] }
+                provider: { type: string, enum: [stripe, flutterwave, thunes] }
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                isEnabled: { type: boolean }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payin-methods/{id}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayinMethodChange
+      summary: Modification d'un moyen d'encaissement (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [priority, minAmount, maxAmount, costFixed, costBps, isEnabled, justification]
+              properties:
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                isEnabled: { type: boolean }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/providers:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPaymentProviders
+      summary: Prestataires de paiement et état du disjoncteur (configuration:read)
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/providers/{code}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestProviderChange
+      summary: Activation ou coupure d'un prestataire ; l'environnement ne change que par migration (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string, enum: [stripe, flutterwave, thunes] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [isEnabled, justification]
+              properties:
+                isEnabled: { type: boolean }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/countries:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListCountries
+      summary: Pays (configuration:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: filter, in: query, schema: { type: string, enum: [open, all], default: open }, description: "open : pays ouverts ou visés par une demande en cours" }
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/countries/{code}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestCountryChange
+      summary: Ouverture et niveau de risque d'un pays ; un pays interdit reste fermé (double validation, countries:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: code, in: path, required: true, schema: { $ref: "#/components/schemas/CountryCode" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [canSend, canReceive, riskLevel, justification]
+              properties:
+                canSend: { type: boolean }
+                canReceive: { type: boolean }
+                riskLevel: { type: string, enum: [low, medium, high, prohibited] }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/quote-preview:
+    post:
+      tags: [admin-configuration]
+      operationId: adminQuotePreview
+      summary: Prix qu'obtiendrait un client à cet instant et règles appliquées, sans devis enregistré (configuration:read)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourceCountry, destinationCountry, sourceCurrency, destinationCurrency, payoutMethod, fundingMethod, amount]
+              properties:
+                sourceCountry: { $ref: "#/components/schemas/CountryCode" }
+                destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+                sourceCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                destinationCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+                fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+                amount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                amountType: { $ref: "#/components/schemas/AmountType" }
+      responses:
+        "200":
+          description: Prix et règles appliquées
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sendAmount, fee, totalToPay, receiveAmount, midRate, customerRate, marginBps, pricingRuleId, feeScheduleId, estimatedDeliveryMinutes, rateTimestamp]
+                properties:
+                  sendAmount: { $ref: "#/components/schemas/Money" }
+                  fee: { $ref: "#/components/schemas/Money" }
+                  totalToPay: { $ref: "#/components/schemas/Money" }
+                  receiveAmount: { $ref: "#/components/schemas/Money" }
+                  midRate: { $ref: "#/components/schemas/ExchangeRate" }
+                  customerRate: { $ref: "#/components/schemas/ExchangeRate" }
+                  marginBps: { type: integer }
+                  pricingRuleId: { type: [string, "null"], format: uuid }
+                  feeScheduleId: { type: string, format: uuid }
+                  estimatedDeliveryMinutes: { type: integer }
+                  rateTimestamp: { type: [string, "null"], format: date-time }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    mobileBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Jeton d'accès EdDSA de 10 minutes, `aud=mobile`, lié à la session
+        (`sid`) et à la clé de l'appareil. Les requêtes sensibles portent en
+        plus l'en-tête `X-Device-Signature`.
+    webSession:
+      type: apiKey
+      in: cookie
+      name: __Host-sid
+      description: |
+        Session du site web client, détenue par le serveur intermédiaire
+        Next.js (BFF). Le navigateur n'a jamais accès au jeton d'accès.
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Jeton d'accès du personnel (EdDSA, 10 minutes, `aud=admin`, clés de
+        signature distinctes des clients), obtenu par mot de passe + clé
+        WebAuthn matérielle et détenu par le serveur du dashboard (BFF).
+        Chaque requête vérifie aussi la session, le réseau autorisé du
+        membre et sa permission.
+  parameters:
+    DeviceId:
+      name: X-Device-Id
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+    DeviceSignature:
+      name: X-Device-Signature
+      in: header
+      required: false
+      description: |
+        Signature base64url (ES256 au format DER, ou EdDSA) du message UTF-8 :
+        "TPv1\n" + MÉTHODE + "\n" + chemin?requête + "\n" + horodatage + "\n"
+        + compteur + "\n" + base64url(SHA-256(corps brut)).
+      schema: { type: string }
+    DeviceSignatureTimestamp:
+      name: X-Device-Signature-Timestamp
+      in: header
+      required: false
+      description: Horodatage Unix en millisecondes (tolérance ±60 s).
+      schema: { type: string, pattern: "^[0-9]{13}$" }
+    DeviceCounter:
+      name: X-Device-Counter
+      in: header
+      required: false
+      description: Compteur strictement croissant par appareil (anti-rejeu).
+      schema: { type: string, pattern: "^[1-9][0-9]{0,15}$" }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{16,128}$"
+  responses:
+    WebhookReceived:
+      description: Événement authentifié et enregistré (y compris un renvoi déjà reçu)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [received]
+            properties:
+              received: { type: boolean, const: true }
+    Problem:
+      description: Erreur (RFC 9457)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Habilitation, réseau ou double validation manquants (FORBIDDEN, FOUR_EYES_VIOLATION)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    ConfigurationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: "Éléments du paramétrage ; chacun porte pendingRequestId (demande de modification en cours, sinon null)."
+          items: { type: object, required: [pendingRequestId], properties: { pendingRequestId: { type: [string, "null"], format: uuid } } }
+    CurrencyCode:
+      type: string
+      pattern: "^[A-Z]{3}$"
+      description: Code ISO 4217.
+    CountryCode:
+      type: string
+      pattern: "^[A-Z]{2}$"
+      description: Code ISO 3166-1 alpha-2.
+    MinorUnits:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,17})$"
+      description: Montant entier en unités mineures, transmis en chaîne pour éviter toute perte de précision.
+    Money:
+      type: object
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount:
+          $ref: "#/components/schemas/MinorUnits"
+        currency:
+          $ref: "#/components/schemas/CurrencyCode"
+    ErrorCode:
+      type: string
+      description: |
+        Codes métier stables. Les codes LG*/TR*/PY*/KY*/AM*/BO* reprennent les
+        SQLSTATE levés par la base (voir db/migrations/0001).
+      enum:
+        - INSUFFICIENT_FUNDS
+        - UNBALANCED_JOURNAL
+        - ACCOUNT_NOT_POSTABLE
+        - CURRENCY_MISMATCH
+        - IDEMPOTENCY_CONFLICT
+        - IMMUTABLE_RECORD
+        - INVALID_LEDGER_INPUT
+        - INVALID_REVERSAL
+        - LEDGER_CHAIN_BROKEN
+        - INVALID_STATUS_TRANSITION
+        - QUOTE_EXPIRED_OR_CONSUMED
+        - INVALID_PAYMENT_TRANSITION
+        - FOUR_EYES_VIOLATION
+        - KYC_LIMIT_EXCEEDED
+        - COMPLIANCE_BLOCKED
+        - INVALID_CREDENTIALS
+        - INVALID_VERIFICATION_CODE
+        - VERIFICATION_EXPIRED
+        - ACCOUNT_LOCKED
+        - TOTP_REQUIRED
+        - ACCOUNT_CLOSURE_BLOCKED
+        - ACCOUNT_DISABLED
+        - DEVICE_ATTESTATION_FAILED
+        - DEVICE_SIGNATURE_INVALID
+        - VALIDATION_FAILED
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - CONFLICT
+        - REQUEST_IN_PROGRESS
+        - PAYLOAD_TOO_LARGE
+        - UNSUPPORTED_MEDIA_TYPE
+        - RATE_LIMITED
+        - SERVICE_UNAVAILABLE
+        - INTERNAL_ERROR
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        requestId:
+          type: string
+        issues:
+          type: array
+          description: Détail par champ (erreurs de validation uniquement).
+          items:
+            type: object
+            required: [path, message]
+            properties:
+              path:
+                type: string
+              message:
+                type: string
+    OtpCode:
+      type: string
+      pattern: "^[0-9]{6}$"
+    VerificationChallenge:
+      type: object
+      required: [challengeId, expiresAt]
+      properties:
+        challengeId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+    TotpCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: { $ref: "#/components/schemas/OtpCode" }
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [challengeId, platform, name, appVersion, osVersion, publicKey, publicKeyAlgorithm, attestation]
+      properties:
+        challengeId: { type: string, format: uuid }
+        platform: { type: string, enum: [ios, android] }
+        name: { type: string, maxLength: 80 }
+        appVersion: { type: string }
+        osVersion: { type: string }
+        publicKey: { type: string, description: "Clé publique SPKI DER en base64 (P-256 pour ES256, Ed25519 pour EdDSA)" }
+        publicKeyAlgorithm: { type: string, enum: [ES256, EdDSA] }
+        attestation:
+          description: |
+            clientDataHash = SHA-256(défi ‖ SHA-256(clé publique SPKI)). iOS :
+            attestKey(keyId, clientDataHash). Android : requestHash =
+            base64url(clientDataHash).
+          oneOf:
+            - type: object
+              required: [type, keyId, attestationObject]
+              properties:
+                type: { type: string, enum: [app_attest] }
+                keyId: { type: string }
+                attestationObject: { type: string }
+            - type: object
+              required: [type, integrityToken]
+              properties:
+                type: { type: string, enum: [play_integrity] }
+                integrityToken: { type: string }
+    ClientDescriptor:
+      oneOf:
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [web] }
+        - type: object
+          required: [type, device]
+          properties:
+            type: { type: string, enum: [mobile] }
+            device: { $ref: "#/components/schemas/DeviceRegistration" }
+        - type: object
+          required: [type, deviceId]
+          properties:
+            type: { type: string, enum: [mobile] }
+            deviceId: { type: string, format: uuid }
+    AuthenticatedSession:
+      type: object
+      required: [status, userId, sessionId, deviceId, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt]
+      properties:
+        status: { type: string, enum: [authenticated] }
+        userId: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        deviceId: { type: [string, "null"], format: uuid }
+        accessToken: { type: string, description: "JWT at+jwt EdDSA, 10 minutes" }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string, description: "Usage unique ; à conserver dans le Keychain/Keystore (mobile) ou côté BFF (web)" }
+        refreshTokenExpiresAt: { type: string, format: date-time }
+    SecondFactorRequired:
+      type: object
+      required: [status, loginChallengeId, method, expiresAt]
+      properties:
+        status: { type: string, enum: [second_factor_required] }
+        loginChallengeId: { type: string, format: uuid }
+        method: { type: string, enum: [sms_otp, totp] }
+        expiresAt: { type: string, format: date-time }
+    SessionSummary:
+      type: object
+      required: [id, audience, createdAt, lastUsedAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        audience: { type: string, enum: [mobile, web] }
+        deviceId: { type: [string, "null"] }
+        deviceName: { type: [string, "null"] }
+        ipAddress: { type: [string, "null"] }
+        userAgent: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time }
+        current: { type: boolean }
+    DeviceSummary:
+      type: object
+      required: [id, platform, name, createdAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        platform: { type: string, enum: [ios, android] }
+        name: { type: string }
+        appVersion: { type: [string, "null"] }
+        osVersion: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: [string, "null"], format: date-time }
+        current: { type: boolean }
+    PayoutMethod:
+      type: string
+      enum: [bank_account, mobile_money, cash_pickup, card, wallet]
+    FundingMethod:
+      type: string
+      enum: [wallet_balance, card, bank_transfer, mobile_money, apple_pay, google_pay]
+      default: card
+    AmountType:
+      type: string
+      description: "`send` : montant converti saisi côté envoi ; `receive` : montant à recevoir par le bénéficiaire."
+      enum: [send, receive]
+      default: send
+    PositiveMinorUnits:
+      type: string
+      pattern: "^[1-9][0-9]{0,14}$"
+    ExchangeRate:
+      type: string
+      description: Taux décimal exact (15 décimales au plus), jamais un nombre flottant.
+      pattern: "^[0-9]+(\\.[0-9]{1,15})?$"
+    QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [destinationCountry, sourceCurrency, destinationCurrency, payoutMethod, amount]
+      properties:
+        destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+        sourceCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+        destinationCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+        amount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+        amountType: { $ref: "#/components/schemas/AmountType" }
+    Quote:
+      type: object
+      required: [quoteId, sourceCountry, destinationCountry, payoutMethod, fundingMethod, sendAmount, fee, totalToPay,
+                 receiveAmount, exchangeRate, estimatedDeliveryMinutes, rateTimestamp, expiresAt]
+      properties:
+        quoteId: { type: [string, "null"], format: uuid, description: "null pour une simulation" }
+        sourceCountry: { $ref: "#/components/schemas/CountryCode" }
+        destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+        sendAmount: { $ref: "#/components/schemas/Money" }
+        fee: { $ref: "#/components/schemas/Money" }
+        totalToPay: { $ref: "#/components/schemas/Money" }
+        receiveAmount: { $ref: "#/components/schemas/Money" }
+        exchangeRate: { $ref: "#/components/schemas/ExchangeRate" }
+        estimatedDeliveryMinutes:
+          type: [integer, "null"]
+          minimum: 0
+          description: Corridor le plus rapide ; null si plus aucun corridor ne sert ce devis.
+        rateTimestamp: { type: [string, "null"], format: date-time, description: "Horodatage du plus ancien taux utilisé" }
+        expiresAt: { type: [string, "null"], format: date-time, description: "null pour une simulation" }
+    KycTier:
+      type: string
+      enum: [tier_0, tier_1, tier_2, tier_3]
+    KycVerification:
+      type: object
+      required: [id, tier, provider, jobType, status, nextAction, createdAt, submittedAt, decidedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        tier: { $ref: "#/components/schemas/KycTier" }
+        provider: { type: string, enum: [onfido, smile_id] }
+        jobType: { type: string, enum: [document_verification, biometric_kyc, proof_of_address] }
+        status:
+          type: string
+          enum: [created, pending_submission, submitted, in_review, approved, rejected, resubmission_required, expired]
+        nextAction:
+          type: [string, "null"]
+          enum: [complete_capture, wait, retry, contact_support, null]
+        createdAt: { type: string, format: date-time }
+        submittedAt: { type: [string, "null"], format: date-time }
+        decidedAt: { type: [string, "null"], format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+    KycOverview:
+      type: object
+      required: [tier, limits, nextTier, declaredIdentity, attemptsRemaining, activeVerification, verifications]
+      properties:
+        tier: { $ref: "#/components/schemas/KycTier" }
+        limits:
+          type: object
+          description: Plafonds en équivalent USD (unités mineures)
+          required: [singleTransferMax, dailyMax, monthlyMax, annualMax]
+          properties:
+            singleTransferMax: { $ref: "#/components/schemas/Money" }
+            dailyMax: { $ref: "#/components/schemas/Money" }
+            monthlyMax: { $ref: "#/components/schemas/Money" }
+            annualMax: { $ref: "#/components/schemas/Money" }
+        nextTier: { type: [string, "null"], enum: [tier_1, tier_2, null] }
+        declaredIdentity: { type: boolean }
+        attemptsRemaining: { type: integer, minimum: 0 }
+        activeVerification:
+          oneOf:
+            - $ref: "#/components/schemas/KycVerification"
+            - type: "null"
+        verifications:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/KycVerification" }
+    StartKycVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [tier]
+      properties:
+        tier: { type: string, enum: [tier_1, tier_2] }
+        declaredIdentity:
+          type: object
+          additionalProperties: false
+          required: [firstName, lastName, dateOfBirth]
+          properties:
+            firstName: { type: string, minLength: 1, maxLength: 100 }
+            lastName: { type: string, minLength: 1, maxLength: 100 }
+            dateOfBirth: { type: string, format: date }
+    KycSdkLaunch:
+      description: Paramètres de lancement du SDK de capture du prestataire
+      oneOf:
+        - type: object
+          required: [provider, sdkToken, workflowRunId]
+          properties:
+            provider: { type: string, const: onfido }
+            sdkToken: { type: string }
+            workflowRunId: { type: string }
+        - type: object
+          required: [provider, partnerId, environment, jobId, userId, jobType, product, callbackUrl, signature, timestamp, webToken]
+          properties:
+            provider: { type: string, const: smile_id }
+            partnerId: { type: string }
+            environment: { type: string, enum: [sandbox, production] }
+            jobId: { type: string, format: uuid }
+            userId: { type: string, format: uuid }
+            jobType: { type: integer }
+            product: { type: string }
+            callbackUrl: { type: string, format: uri }
+            signature: { type: string }
+            timestamp: { type: string, format: date-time }
+            webToken: { type: [string, "null"], description: "Intégration web hébergée (session web uniquement)" }
+    TransferStatus:
+      type: string
+      enum: [created, awaiting_funding, funding_processing, funded, compliance_review, payout_pending, payout_processing,
+             completed, payout_failed, cancelled, refund_pending, refunded]
+    Recipient:
+      type: object
+      required: [id, country, currency, payoutMethod, firstName, lastName, displayHint, mobileOperator, relationship, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        country: { $ref: "#/components/schemas/CountryCode" }
+        currency: { $ref: "#/components/schemas/CurrencyCode" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        firstName: { type: string }
+        lastName: { type: string }
+        displayHint: { type: string, description: "Indice non sensible (ex. « •••• 4567 · Orange Money »)" }
+        mobileOperator: { type: [string, "null"] }
+        relationship: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+    CreateRecipientRequest:
+      type: object
+      additionalProperties: false
+      required: [country, currency, firstName, lastName, account]
+      properties:
+        country: { $ref: "#/components/schemas/CountryCode" }
+        currency: { $ref: "#/components/schemas/CurrencyCode" }
+        firstName: { type: string, minLength: 1, maxLength: 100 }
+        lastName: { type: string, minLength: 1, maxLength: 100 }
+        relationship: { type: string, enum: [family, friend, self, business, other] }
+        account:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, msisdn, operator]
+              properties:
+                kind: { type: string, const: mobile_money }
+                msisdn: { type: string }
+                operator: { type: string, enum: [orange_money, wave, mtn_momo, moov_money, free_money, mpesa, airtel_money, vodafone_cash] }
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              description: IBAN, ou numéro de compte et code banque
+              properties:
+                kind: { type: string, const: bank_account }
+                iban: { type: string }
+                accountNumber: { type: string }
+                bankCode: { type: string }
+            - type: object
+              additionalProperties: false
+              required: [kind, msisdn]
+              properties:
+                kind: { type: string, const: cash_pickup }
+                msisdn: { type: string }
+    CreateTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [quoteId, recipientId, purposeCode]
+      properties:
+        quoteId: { type: string, format: uuid }
+        recipientId: { type: string, format: uuid }
+        purposeCode:
+          type: string
+          enum: [family_support, education, medical_treatment, gift, household_expenses, savings, travel, other]
+        totpCode: { type: string, pattern: "^\\d{6}$", description: "Session web : code de l'application d'authentification" }
+    Transfer:
+      type: object
+      required: [id, reference, status, statusReason, recipient, sendAmount, fee, totalToPay, receiveAmount, exchangeRate,
+                 fundingMethod, payoutMethod, purposeCode, createdAt, fundedAt, completedAt, cancelledAt, refundedAt]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string, pattern: "^TP[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{10}$" }
+        status: { $ref: "#/components/schemas/TransferStatus" }
+        statusReason: { type: [string, "null"] }
+        recipient:
+          type: object
+          required: [id, displayHint]
+          properties:
+            id: { type: string, format: uuid }
+            displayHint: { type: string }
+        sendAmount: { $ref: "#/components/schemas/Money" }
+        fee: { $ref: "#/components/schemas/Money" }
+        totalToPay: { $ref: "#/components/schemas/Money" }
+        receiveAmount: { $ref: "#/components/schemas/Money" }
+        exchangeRate: { $ref: "#/components/schemas/ExchangeRate" }
+        fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+        payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+        purposeCode: { type: string }
+        createdAt: { type: string, format: date-time }
+        fundedAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        cancelledAt: { type: [string, "null"], format: date-time }
+        refundedAt: { type: [string, "null"], format: date-time }
+    FundingAction:
+      oneOf:
+        - type: object
+          required: [type, clientSecret, publishableKey]
+          description: Paiement par carte (Stripe Payment Element)
+          properties:
+            type: { type: string, const: stripe_payment_intent }
+            clientSecret: { type: string }
+            publishableKey: { type: string }
+        - type: object
+          required: [type, url]
+          description: Page de paiement hébergée (Flutterwave)
+          properties:
+            type: { type: string, const: redirect }
+            url: { type: string, format: uri }
+    CreatedTransfer:
+      type: object
+      required: [transfer, funding]
+      properties:
+        transfer: { $ref: "#/components/schemas/Transfer" }
+        funding:
+          oneOf:
+            - $ref: "#/components/schemas/FundingAction"
+            - type: "null"
+    Wallet:
+      type: object
+      required: [currency, minorUnits, available, held]
+      properties:
+        currency: { $ref: "#/components/schemas/CurrencyCode" }
+        minorUnits: { type: integer, minimum: 0, maximum: 4 }
+        available: { $ref: "#/components/schemas/Money" }
+        held: { $ref: "#/components/schemas/Money" }
+    StatementEntry:
+      type: object
+      required: [entryId, sequence, type, direction, amount, balanceAfter, description, reference, isReversal, effectiveAt]
+      properties:
+        entryId: { type: string }
+        sequence: { type: string }
+        type: { type: string }
+        direction: { type: string, enum: [in, out] }
+        amount: { $ref: "#/components/schemas/Money" }
+        balanceAfter: { $ref: "#/components/schemas/Money" }
+        description: { type: string }
+        reference:
+          type: [object, "null"]
+          properties:
+            type: { type: string }
+            id: { type: string }
+        isReversal: { type: boolean }
+        effectiveAt: { type: string, format: date-time }
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, crv, x, kid, alg, use]
+            properties:
+              kty:
+                type: string
+                enum: [OKP]
+              crv:
+                type: string
+                enum: [Ed25519]
+              x:
+                type: string
+              kid:
+                type: string
+              alg:
+                type: string
+                enum: [EdDSA]
+              use:
+                type: string
+                enum: [sig]
+    AdminTokens:
+      type: object
+      additionalProperties: false
+      required: [accessToken, accessTokenExpiresAt, refreshToken, sessionExpiresAt]
+      properties:
+        accessToken: { type: string, description: "JWT aud=admin, 10 minutes" }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string, pattern: "^art_[A-Za-z0-9_-]{43}$", description: "Usage unique" }
+        sessionExpiresAt: { type: string, format: date-time, description: "Expiration absolue (12 h au plus)" }
+    ApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [id, permission, actionType, targetType, targetId, payload, justification, status, requestedBy, requestedAt, decidedBy, decidedAt, decisionNote, executedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        permission: { type: string }
+        actionType:
+          type: string
+          enum: [invite_admin, grant_roles, reactivate_admin, update_admin_network, refund_transfer, set_account_status, ledger_adjustment, reverse_journal, file_sar]
+        targetType: { type: string }
+        targetId: { type: string }
+        payload: { type: object, description: "Contenu figé par empreinte SHA-256" }
+        justification: { type: string }
+        status: { type: string, enum: [pending, approved, rejected, expired, executed] }
+        requestedBy: { $ref: "#/components/schemas/StaffReference" }
+        requestedAt: { type: string, format: date-time }
+        decidedBy: { oneOf: [{ $ref: "#/components/schemas/StaffReference" }, { type: "null" }] }
+        decidedAt: { type: [string, "null"], format: date-time }
+        decisionNote: { type: [string, "null"] }
+        executedAt: { type: [string, "null"], format: date-time }
+        expiresAt: { type: string, format: date-time }
+    StaffReference:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }

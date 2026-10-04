@@ -1,0 +1,26 @@
+{
+  "name": "@transfertplus/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tests de bout en bout du site client et du back-office sur une pile réelle (PostgreSQL, Redis, API, BFF).",
+  "scripts": {
+    "e2e": "tsx scripts/stack.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@peculiar/x509": "^2.1.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "cbor-x": "^1.6.6",
+    "eslint": "^10.12.0",
+    "pg": "^8.23.1",
+    "reflect-metadata": "^0.2.2",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0"
+  }
+}

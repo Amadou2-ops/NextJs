@@ -1,0 +1,29 @@
+# Alertes sur les journaux (LogQL), évaluées par le ruler de Loki.
+# Étiquettes posées par Alloy : service (service Compose), level (pino).
+groups:
+  - name: journaux
+    rules:
+      - alert: JournauxErreursEnRafale
+        expr: sum by (service) (count_over_time({service=~"api|worker", level=~"error|fatal"}[5m])) > 20
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.service }} : {{ $value }} erreurs journalisées en 5 min"
+          description: 'Grafana > Explore > Loki : {service="{{ $labels.service }}", level="error"}.'
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: JournalErreurFatale
+        expr: sum by (service) (count_over_time({service=~"api|worker", level="fatal"}[5m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} : erreur fatale journalisée"
+          description: "Le processus s'est arrêté sur une erreur non récupérable (configuration, base, secret) ; Docker le redémarre."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: TacheEnEchecJournalisee
+        expr: sum by (service) (count_over_time({service="worker"} |= "échec de la tâche" [15m])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "worker : {{ $value }} échecs de tâche journalisés en 15 min"
+          description: 'Grafana > Explore > Loki : {service="worker"} |= "échec de la tâche" | json.'
+          runbook: "deploy/README.md#surveillance-et-alertes"

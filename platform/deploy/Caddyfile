@@ -1,0 +1,59 @@
+# Frontal TLS (certificats ACME automatiques, HTTP/3). Caddy ne fait
+# confiance à aucun X-Forwarded-For entrant : il le remplace par l'adresse
+# réelle du client, que l'API et les BFF lisent au rang 1.
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+(securite) {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		-Server
+		-X-Powered-By
+	}
+	request_body {
+		max_size 1MB
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$APP_DOMAIN} {
+	import securite
+	reverse_proxy web:3000
+}
+
+{$ADMIN_DOMAIN} {
+	import securite
+	# Back-office : réseau de l'entreprise uniquement (l'API revérifie, par membre).
+	@hors_reseau not remote_ip {$ADMIN_ALLOWED_CIDRS}
+	respond @hors_reseau "Accès refusé" 403
+	reverse_proxy admin:3001
+}
+
+{$API_DOMAIN} {
+	import securite
+	# Les routes du personnel ne sont servies qu'au back-office, par le réseau interne.
+	@personnel path /v1/admin /v1/admin/*
+	respond @personnel 404
+	reverse_proxy {
+		dynamic a api 8080 {
+			refresh 10s
+		}
+		lb_policy least_conn
+		# Santé passive (les sondes actives ne s'appliquent pas aux amonts dynamiques) :
+		# une réplique en échec est écartée 30 s ; les conteneurs ont leur propre sonde.
+		fail_duration 30s
+		max_fails 3
+	}
+}

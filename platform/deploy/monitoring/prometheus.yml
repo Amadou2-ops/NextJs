@@ -1,0 +1,50 @@
+# Prometheus TransfertPlus — collecte sur le réseau interne « monitoring ».
+#
+# Cibles :
+#   - api    : chaque réplique (résolution DNS Docker du service : un
+#              enregistrement A par conteneur) — latences HTTP et processus ;
+#   - worker : tâches planifiées et indicateurs d'exploitation lus en base
+#              (registre, webhooks, outbox, transferts, conformité).
+# Le port 9464 n'est publié ni sur l'hôte ni par Caddy.
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    environment: production
+
+rule_files:
+  - alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: api
+    dns_sd_configs:
+      - names: ["api"]
+        type: A
+        port: 9464
+        refresh_interval: 30s
+
+  - job_name: worker
+    # Les indicateurs lus en base coûtent quelques requêtes indexées : une
+    # collecte par minute suffit aux seuils d'alerte (minutes à heures).
+    scrape_interval: 60s
+    scrape_timeout: 20s
+    static_configs:
+      - targets: ["worker:9464"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]

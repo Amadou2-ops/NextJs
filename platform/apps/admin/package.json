@@ -1,0 +1,36 @@
+{
+  "name": "@transfertplus/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Back-office Next.js : connexion par clé de sécurité, vues RBAC, double validation ; serveur intermédiaire (BFF) détenant les jetons.",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "node .next/standalone/apps/admin/server.js",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "next typegen && eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "^14.0.0",
+    "jose": "^6.2.12",
+    "next": "^16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.3.8",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
+  }
+}

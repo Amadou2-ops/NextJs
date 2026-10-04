@@ -1,0 +1,392 @@
+# Tests unitaires des règles d'alerte : promtool test rules alerts.test.yml
+# Dans promtool, time() vaut le temps écoulé depuis 0 (époque Unix) : un
+# horodatage publié à 0 signifie « jamais ».
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- Registre ---------------------------------------------------------------
+  - name: rapprochement en anomalie, puis sain
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_ledger_reconciliation_healthy{job="worker",instance="worker:9464",service="worker"}'
+        values: "1x10 0x10 1x10"
+      - series: 'transfertplus_ledger_reconciliation_last_finished_timestamp_seconds{job="worker",instance="worker:9464",service="worker"}'
+        values: "60x30"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RegistreIntegriteRompue
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: RegistreIntegriteRompue
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations:
+              summary: "Rapprochement du registre en anomalie"
+              description: "Le dernier rapprochement a relevé une rupture de la chaîne de hachage, un solde ou une balance incohérents, ou a échoué. Consulter Registre > Rapprochements dans le back-office ; l'avancée du point de contrôle est suspendue."
+              runbook: "deploy/README.md#surveillance-et-alertes"
+      - eval_time: 25m
+        alertname: RegistreIntegriteRompue
+        exp_alerts: []
+
+  - name: aucun rapprochement encore terminé — pas d'alerte d'intégrité, mais retard signalé
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_ledger_reconciliation_healthy{job="worker",instance="worker:9464",service="worker"}'
+        values: "0x300"
+      - series: 'transfertplus_ledger_reconciliation_last_finished_timestamp_seconds{job="worker",instance="worker:9464",service="worker"}'
+        values: "0x300"
+      - series: 'transfertplus_job_interval_seconds{job="worker",instance="worker:9464",service="worker",task="ledger-reconciliation"}'
+        values: "3600x300"
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: RegistreIntegriteRompue
+        exp_alerts: []
+      # 3 périodes de 1 h dépassées à 3 h, plus 10 min de confirmation.
+      - eval_time: 3h5m
+        alertname: RegistreRapprochementEnRetard
+        exp_alerts: []
+      - eval_time: 3h12m
+        alertname: RegistreRapprochementEnRetard
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Plus de trois périodes sans rapprochement : l'intégrité du registre n'est plus vérifiée.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Aucun rapprochement du registre terminé depuis 3h 12m 0s"}
+
+  - name: événement ledger.integrity_breach émis
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="ledger.integrity_breach"}'
+        values: "0x10 1x60"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: RegistreAlerteIntegriteEmise
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: RegistreAlerteIntegriteEmise
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker, event_type: ledger.integrity_breach }
+            exp_annotations: {"description": "1 rupture(s) d'intégrité signalée(s) par le worker durant la dernière heure.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Événement ledger.integrity_breach émis"}
+
+  - name: ancrage RFC 3161 en retard
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_ledger_last_anchor_timestamp_seconds{job="worker",instance="worker:9464",service="worker"}'
+        values: "600x900"
+      - series: 'transfertplus_job_interval_seconds{job="worker",instance="worker:9464",service="worker",task="ledger-chain-anchor"}'
+        values: "21600x900"
+    alert_rule_test:
+      - eval_time: 12h
+        alertname: RegistreAncrageEnRetard
+        exp_alerts: []
+      - eval_time: 13h
+        alertname: RegistreAncrageEnRetard
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Autorité d'horodatage injoignable ou réponse refusée : la preuve externe d'antériorité ne progresse plus.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Aucun ancrage RFC 3161 du registre depuis 12h 50m 0s"}
+
+  # --- Tâches -----------------------------------------------------------------
+  - name: tâche sans succès, puis rétablie
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_job_last_success_timestamp_seconds{job="worker",instance="worker:9464",service="worker",task="webhook-retry"}'
+        values: "0x60 3600x10"
+      - series: 'transfertplus_job_interval_seconds{job="worker",instance="worker:9464",service="worker",task="webhook-retry"}'
+        values: "60x70"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TacheSansSucces
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: TacheSansSucces
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker, task: webhook-retry }
+            exp_annotations: {"description": "Voir les journaux du worker (« échec de la tâche », task=webhook-retry).", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Tâche webhook-retry sans exécution réussie depuis plus de trois périodes"}
+      - eval_time: 65m
+        alertname: TacheSansSucces
+        exp_alerts: []
+
+  # --- Webhooks ---------------------------------------------------------------
+  - name: file de webhooks en retard (avertissement puis critique)
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_webhook_backlog_oldest_age_seconds{job="worker",instance="worker:9464",service="worker"}'
+        values: "0+60x90"
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: WebhooksFileEnRetard
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: WebhooksFileEnRetard
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Les statuts de paiement et de KYC ne progressent plus.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Webhook en attente depuis 25m 0s"}
+      - eval_time: 1h10m
+        alertname: WebhooksFileEnRetard
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Les statuts de paiement et de KYC ne progressent plus.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Webhook en attente depuis 1h 10m 0s"}
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Les statuts de paiement et de KYC ne progressent plus depuis plus d'une heure.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Webhook en attente depuis 1h 10m 0s"}
+
+  - name: webhooks refusés en rafale
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_webhook_rejections_total{job="worker",instance="worker:9464",service="worker",source="stripe",reason="invalid_signature"}'
+        values: "3x10 3+5x10"
+      - series: 'transfertplus_webhook_rejections_total{job="worker",instance="worker:9464",service="worker",source="thunes",reason="missing_signature"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: WebhooksRefusesEnRafale
+        exp_alerts:
+          - exp_labels: { severity: warning, source: stripe, reason: invalid_signature }
+            exp_annotations: {"description": "Tentative de falsification, ou secret de signature désaligné après une rotation chez le prestataire.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "48 webhooks stripe refusés en 15 min (invalid_signature)"}
+
+  - name: webhook abandonné
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="integrations.webhook_exhausted"}'
+        values: "0x5 2x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WebhookAbandonne
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker, event_type: integrations.webhook_exhausted }
+            exp_annotations: {"description": "L'état d'un paiement, d'un versement ou d'une vérification peut ne plus refléter celui du prestataire : rapprocher manuellement.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Webhook prestataire abandonné après le nombre maximal d'essais"}
+
+  # --- Paiements et notifications --------------------------------------------
+  - name: anomalies de paiement critiques et signaux à traiter
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="payments.payout_amount_mismatch"}'
+        values: "0x10 1x60"
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="payments.float_insufficient"}'
+        values: "0x10 3x60"
+      - series: 'transfertplus_outbox_events_total{job="worker",instance="worker:9464",service="worker",event_type="transfers.completed"}'
+        values: "0x10 40x60"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: PaiementAnomalieCritique
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PaiementAnomalieCritique
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker, event_type: payments.payout_amount_mismatch }
+            exp_annotations: {"description": "Montant divergent, remboursement en échec, issue inconnue, versement annulé après réussite ou rétrofacturation : rapprocher avec le prestataire avant toute nouvelle opération sur le transfert.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Anomalie de paiement : payments.payout_amount_mismatch"}
+      - eval_time: 15m
+        alertname: PaiementAnomalie
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker, event_type: payments.float_insufficient }
+            exp_annotations: {"description": "Préfinancement insuffisant, paiement entrant tardif, versement en attente ou frais prestataire non comptabilisés : à traiter dans la journée.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Signal de paiement : payments.float_insufficient"}
+      - eval_time: 75m
+        alertname: PaiementAnomalieCritique
+        exp_alerts: []
+
+  - name: SMS de clients non confirmés
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_customer_notifications_stalled{job="worker",instance="worker:9464",service="worker"}'
+        values: "0x5 2x30"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NotificationsClientsBloquees
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: NotificationsClientsBloquees
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Prestataire SMS indisponible ou refusant les envois : vérifier Twilio et les erreurs dans integrations.customer_notifications.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "2 SMS de clients non confirmés depuis plus de 30 min"}
+
+  # --- Transferts -------------------------------------------------------------
+  - name: remboursement bloqué
+    interval: 5m
+    input_series:
+      - series: 'transfertplus_transfers_oldest_age_seconds{job="worker",instance="worker:9464",service="worker",status="refund_pending"}'
+        values: "0 300 4000"
+      - series: 'transfertplus_transfers_oldest_age_seconds{job="worker",instance="worker:9464",service="worker",status="payout_processing"}'
+        values: "0 0 0"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RemboursementBloque
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: RemboursementBloque
+        exp_alerts:
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker, status: refund_pending }
+            exp_annotations: {"description": "Des fonds de client ne lui sont pas rendus.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Remboursement en attente depuis 1h 6m 40s"}
+      - eval_time: 10m
+        alertname: VersementBloque
+        exp_alerts: []
+
+  # --- Conformité -------------------------------------------------------------
+  - name: listes de sanctions manquantes puis vieillissantes
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_aml_sanctions_lists_current{job="worker",instance="worker:9464",service="worker"}'
+        values: "1x60 2x3000"
+      - series: 'transfertplus_aml_sanctions_lists_oldest_import_timestamp_seconds{job="worker",instance="worker:9464",service="worker"}'
+        values: "0x3060"
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ListesSanctionsManquantes
+        exp_alerts:
+          - exp_labels: { severity: critical, team: conformite, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Le criblage refuse les transferts tant que les listes exigées ne sont pas importées.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "1 liste(s) de sanctions courante(s) au lieu de 2 (OFAC, ONU)"}
+      - eval_time: 2h
+        alertname: ListesSanctionsManquantes
+        exp_alerts: []
+      - eval_time: 1d5h
+        alertname: ListesSanctionsAnciennes
+        exp_alerts: []
+      - eval_time: 1d7h
+        alertname: ListesSanctionsAnciennes
+        exp_alerts:
+          - exp_labels: { severity: warning, team: conformite, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Au-delà de 48 h (AML_LISTS_MAX_AGE_HOURS), le criblage refuse les transferts.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Liste de sanctions importée il y a 1d 7h 0m 0s"}
+      - eval_time: 1d21h
+        alertname: ListesSanctionsAnciennes
+        exp_alerts:
+          - exp_labels: { severity: warning, team: conformite, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Au-delà de 48 h (AML_LISTS_MAX_AGE_HOURS), le criblage refuse les transferts.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Liste de sanctions importée il y a 1d 21h 0m 0s"}
+          - exp_labels: { severity: critical, team: conformite, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Moins de quatre heures avant le refus de tous les transferts par le criblage.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Liste de sanctions importée il y a 1d 21h 0m 0s"}
+
+  - name: alertes LCB-FT bloquantes non traitées
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_aml_alerts_open{job="worker",instance="worker:9464",service="worker",severity="high",blocking="true"}'
+        values: "1x400"
+      - series: 'transfertplus_aml_alerts_open{job="worker",instance="worker:9464",service="worker",severity="low",blocking="false"}'
+        values: "7x400"
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: AlertesBloquantesEnAttente
+        exp_alerts: []
+      - eval_time: 5h
+        alertname: AlertesBloquantesEnAttente
+        exp_alerts:
+          - exp_labels: { severity: warning, team: conformite }
+            exp_annotations: {"description": "Des transferts restent retenus en attente de décision de la conformité.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "1 alerte(s) LCB-FT bloquante(s) non traitée(s) depuis plus de 4 h"}
+
+  # --- Change, paiements ------------------------------------------------------
+  - name: taux de change anciens
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_fx_rates_last_timestamp_seconds{job="worker",instance="worker:9464",service="worker"}'
+        values: "0x200"
+    alert_rule_test:
+      - eval_time: 1h20m
+        alertname: TauxDeChangeAnciens
+        exp_alerts: []
+      - eval_time: 1h40m
+        alertname: TauxDeChangeAnciens
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Au-delà de 120 min (FX_MAX_RATE_AGE_MINUTES), aucun devis n'est plus émis.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Dernier taux de change vieux de 1h 40m 0s"}
+      - eval_time: 2h10m
+        alertname: TauxDeChangeAnciens
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"description": "Au-delà de 120 min (FX_MAX_RATE_AGE_MINUTES), aucun devis n'est plus émis.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Dernier taux de change vieux de 2h 10m 0s"}
+          - exp_labels: { severity: critical, job: worker, instance: "worker:9464", service: worker }
+            exp_annotations: {"runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Dernier taux de change vieux de 2h 10m 0s : devis refusés"}
+
+  - name: disjoncteur de paiement ouvert
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_payment_circuit_open{job="worker",instance="worker:9464",service="worker",provider="stripe"}'
+        values: "0 1x40"
+      - series: 'transfertplus_payment_circuit_open{job="worker",instance="worker:9464",service="worker",provider="thunes"}'
+        values: "0x40"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PrestatairePaiementCoupe
+        exp_alerts:
+          - exp_labels: { severity: warning, job: worker, instance: "worker:9464", service: worker, provider: stripe }
+            exp_annotations: {"description": "Les appels au prestataire sont suspendus après des échecs répétés.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Disjoncteur ouvert pour stripe"}
+
+  # --- Disponibilité, API -----------------------------------------------------
+  - name: worker absent et réplique d'API injoignable
+    interval: 1m
+    input_series:
+      - series: 'up{job="api",instance="10.0.1.4:9464"}'
+        values: "1x10"
+      - series: 'up{job="api",instance="10.0.1.5:9464"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: WorkerAbsent
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations: {"description": "Sans worker : ni rapprochement du registre, ni traitement des webhooks, ni paiements sortants, ni mise à jour des listes de sanctions.", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "Aucun worker en service"}
+      - eval_time: 6m
+        alertname: CibleInjoignable
+        exp_alerts:
+          - exp_labels: { severity: critical, job: api, instance: "10.0.1.5:9464" }
+            exp_annotations: {"description": "Processus arrêté, conteneur en redémarrage ou collecte des indicateurs en échec (base injoignable : réponse 503).", "runbook": "deploy/README.md#surveillance-et-alertes", "summary": "api 10.0.1.5:9464 ne répond plus aux collectes"}
+      - eval_time: 6m
+        alertname: ApiAbsente
+        exp_alerts: []
+
+  - name: taux d'erreurs serveur de l'API
+    interval: 1m
+    input_series:
+      - series: 'transfertplus_http_request_duration_seconds_count{job="api",instance="10.0.1.4:9464",method="POST",route="/v1/transfers",status_class="2xx"}'
+        values: "0+60x30"
+      - series: 'transfertplus_http_request_duration_seconds_count{job="api",instance="10.0.1.4:9464",method="POST",route="/v1/transfers",status_class="5xx"}'
+        values: "0x10 0+20x20"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ApiErreursServeur
+        exp_alerts: []
+      - eval_time: 28m
+        alertname: ApiErreursServeur
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations: {"runbook": "deploy/README.md#surveillance-et-alertes", "summary": "25% de réponses 5xx sur l'API"}
+          - exp_labels: { severity: critical }
+            exp_annotations: {"runbook": "deploy/README.md#surveillance-et-alertes", "summary": "25% de réponses 5xx sur l'API"}
+
+  - name: veille toujours active
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: VeilleAlertes
+        exp_alerts:
+          - exp_labels: { severity: none }
+            exp_annotations: { summary: "Chaîne d'alerte opérationnelle" }
+
+  - name: chaîne de surveillance
+    interval: 1m
+    input_series:
+      - series: 'up{job="loki",instance="loki:3100"}'
+        values: "1x60"
+      - series: 'up{job="alertmanager",instance="alertmanager:9093"}'
+        values: "1x10 0x20"
+      - series: 'loki_distributor_lines_received_total{job="loki",instance="loki:3100",tenant="fake"}'
+        values: "0+100x20 2000x40"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: JournauxNonCollectes
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: SurveillanceDegradee
+        exp_alerts:
+          - exp_labels: { severity: warning, job: alertmanager, instance: "alertmanager:9093" }
+            exp_annotations:
+              summary: "alertmanager injoignable"
+              description: "Journaux ou notifications d'alerte interrompus (la veille externe signale la perte d'Alertmanager)."
+              runbook: "deploy/README.md#surveillance-et-alertes"
+      # Plus aucune ligne à partir de 21 min : taux nul à 36 min, plus 15 min de confirmation.
+      - eval_time: 45m
+        alertname: JournauxNonCollectes
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: JournauxNonCollectes
+        exp_alerts:
+          - exp_labels: { severity: warning, job: loki, instance: "loki:3100" }
+            exp_annotations:
+              summary: "Aucune ligne de journal reçue par Loki depuis 15 min"
+              description: "Collecteur Alloy arrêté, ou fichiers json-file illisibles (voir docker compose logs alloy)."
+              runbook: "deploy/README.md#surveillance-et-alertes"

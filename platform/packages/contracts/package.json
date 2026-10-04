@@ -1,0 +1,7 @@
+{
+  "name": "@transfertplus/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contrat OpenAPI unique de l'API, source des types TypeScript (web, admin) et du client Dart (mobile).",
+  "files": ["openapi.yaml"]
+}

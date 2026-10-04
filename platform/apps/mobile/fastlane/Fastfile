@@ -1,0 +1,221 @@
+# Publication signée de l'application mobile TransfertPlus.
+#
+#   bundle exec fastlane android internal   # AAB signé → Google Play (piste interne par défaut)
+#   bundle exec fastlane ios beta           # IPA signée → TestFlight
+#
+# Tous les identifiants viennent de variables d'environnement (secrets de la CI,
+# voir fastlane/README.md) : aucun certificat, clé ou mot de passe dans le dépôt.
+# Chaque lane vérifie ce qu'elle va publier AVANT l'envoi : certificat de
+# signature Android attendu, profil de distribution App Store du bon bundle avec
+# App Attest de production.
+
+require "fileutils"
+require "securerandom"
+
+# Ni statistiques d'usage envoyées à fastlane, ni README régénéré à chaque exécution.
+opt_out_usage
+skip_docs
+
+default_platform(:android)
+
+PACKAGE_NAME = "com.transfertplus.app"
+BUNDLE_ID = "com.transfertplus.app"
+MOBILE_ROOT = File.expand_path("..", __dir__)
+
+# Variables de compilation transmises à l'application (lib/src/config.dart).
+DART_DEFINES = {
+  android: %w[API_BASE_URL PLAY_INTEGRITY_CLOUD_PROJECT SMILE_ID_PARTNER_ID SMILE_ID_AUTH_TOKEN SMILE_ID_SANDBOX],
+  ios: %w[API_BASE_URL SMILE_ID_PARTNER_ID SMILE_ID_AUTH_TOKEN SMILE_ID_SANDBOX],
+}.freeze
+
+def required_env(name)
+  value = ENV.fetch(name, "")
+  UI.user_error!("variable d'environnement #{name} manquante") if value.strip.empty?
+  value
+end
+
+def build_version
+  name = required_env("TP_BUILD_NAME")
+  number = required_env("TP_BUILD_NUMBER")
+  UI.user_error!("TP_BUILD_NAME doit être de la forme X.Y.Z (reçu : #{name})") unless name.match?(/\A\d{1,3}\.\d{1,3}\.\d{1,3}\z/)
+  UI.user_error!("TP_BUILD_NUMBER doit être un entier positif (reçu : #{number})") unless number.match?(/\A[1-9]\d{0,8}\z/)
+  [name, number]
+end
+
+def dart_define_arguments(platform)
+  UI.user_error!("API_BASE_URL doit être en https pour une publication") unless required_env("API_BASE_URL").start_with?("https://")
+  DART_DEFINES.fetch(platform).filter_map do |name|
+    value = ENV.fetch(name, "")
+    "--dart-define=#{name}=#{value}" unless value.empty?
+  end
+end
+
+# Compilation Flutter de publication : code Dart obscurci, symboles conservés à
+# part (build/symbols, archivés par la CI pour déchiffrer les traces de plantage).
+def flutter_release(platform, artifact, extra_arguments)
+  name, number = build_version
+  Dir.chdir(MOBILE_ROOT) do
+    sh("flutter", "pub", "get", "--enforce-lockfile")
+    sh(
+      "flutter", "build", artifact, "--release",
+      "--obfuscate", "--split-debug-info=build/symbols/#{platform}",
+      "--build-name=#{name}", "--build-number=#{number}",
+      *dart_define_arguments(platform), *extra_arguments
+    )
+  end
+  [name, number]
+end
+
+platform :android do
+  desc "Construit l'AAB signé avec la clé d'envoi et le publie sur Google Play"
+  lane :internal do
+    keystore = required_env("ANDROID_KEYSTORE_PATH")
+    UI.user_error!("magasin de clés introuvable : #{keystore}") unless File.file?(keystore)
+    key_properties = File.join(MOBILE_ROOT, "android", "key.properties")
+    File.write(
+      key_properties,
+      [
+        "storeFile=#{File.expand_path(keystore)}",
+        "storePassword=#{required_env('ANDROID_KEYSTORE_PASSWORD')}",
+        "keyAlias=#{required_env('ANDROID_KEY_ALIAS')}",
+        "keyPassword=#{required_env('ANDROID_KEY_PASSWORD')}",
+      ].join("\n") + "\n",
+      perm: 0o600,
+    )
+    begin
+      name, number = flutter_release(:android, "appbundle", [])
+    ensure
+      File.delete(key_properties) if File.exist?(key_properties)
+    end
+
+    aab = File.join(MOBILE_ROOT, "build", "app", "outputs", "bundle", "release", "app-release.aab")
+    UI.user_error!("AAB introuvable : #{aab}") unless File.file?(aab)
+
+    # L'AAB doit être signé par la clé d'envoi enregistrée dans la Play Console :
+    # une signature inattendue (clé de débogage, mauvais magasin) est refusée ici.
+    expected = required_env("ANDROID_UPLOAD_CERT_SHA256").delete(":").upcase
+    printed = sh("keytool", "-printcert", "-jarfile", aab, log: false)
+    fingerprints = printed.scan(/SHA256:\s*([0-9A-F:]{95})/i).flatten.map { |value| value.delete(":").upcase }
+    UI.user_error!("AAB non signé ou signature illisible") if fingerprints.empty?
+    unless fingerprints.include?(expected)
+      UI.user_error!("certificat de signature inattendu (#{fingerprints.join(', ')}) : attendu #{expected}")
+    end
+
+    track = ENV.fetch("PLAY_TRACK", "internal")
+    UI.user_error!("piste Play inconnue : #{track}") unless %w[internal alpha beta production].include?(track)
+    release_status = ENV.fetch("PLAY_RELEASE_STATUS", "completed")
+    UI.user_error!("statut de version inconnu : #{release_status}") unless %w[draft completed].include?(release_status)
+
+    upload_to_play_store(
+      package_name: PACKAGE_NAME,
+      json_key_data: required_env("PLAY_SERVICE_ACCOUNT_JSON"),
+      aab: aab,
+      track: track,
+      release_status: release_status,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+    )
+    UI.success("Version #{name} (#{number}) publiée sur la piste #{track} (#{release_status})")
+  end
+end
+
+platform :ios do
+  desc "Construit l'IPA signée (distribution App Store) et l'envoie sur TestFlight"
+  lane :beta do
+    team_id = required_env("APPLE_TEAM_ID")
+    UI.user_error!("APPLE_TEAM_ID invalide") unless team_id.match?(/\A[A-Z0-9]{10}\z/)
+
+    api_key = app_store_connect_api_key(
+      key_id: required_env("ASC_KEY_ID"),
+      issuer_id: required_env("ASC_ISSUER_ID"),
+      key_content: required_env("ASC_KEY_P8_BASE64"),
+      is_key_content_base64: true,
+      in_house: false,
+    )
+
+    profile_path = required_env("IOS_PROVISIONING_PROFILE_PATH")
+    profile = FastlaneCore::ProvisioningProfile.parse(profile_path)
+    entitlements = profile.fetch("Entitlements", {})
+    if entitlements["application-identifier"] != "#{team_id}.#{BUNDLE_ID}"
+      UI.user_error!("profil pour #{entitlements['application-identifier']} : attendu #{team_id}.#{BUNDLE_ID}")
+    end
+    if profile.key?("ProvisionedDevices") || entitlements["get-task-allow"] == true
+      UI.user_error!("le profil n'est pas un profil de distribution App Store")
+    end
+    if entitlements["com.apple.developer.devicecheck.appattest-environment"] != "production"
+      UI.user_error!("le profil n'autorise pas App Attest en production (capacité App Attest de l'App ID)")
+    end
+    if profile.fetch("ExpirationDate").to_time < Time.now + (7 * 24 * 3600)
+      UI.user_error!("le profil expire le #{profile.fetch('ExpirationDate')} : le renouveler")
+    end
+
+    keychain_name = "transfertplus-release"
+    keychain_password = SecureRandom.hex(32)
+    create_keychain(
+      name: keychain_name,
+      password: keychain_password,
+      default_keychain: false,
+      unlock: true,
+      timeout: 3600,
+      lock_when_sleeps: true,
+      add_to_search_list: true,
+    )
+    begin
+      import_certificate(
+        certificate_path: required_env("IOS_DISTRIBUTION_CERT_P12_PATH"),
+        certificate_password: required_env("IOS_DISTRIBUTION_CERT_PASSWORD"),
+        keychain_name: keychain_name,
+        keychain_password: keychain_password,
+        log_output: false,
+      )
+      install_provisioning_profile(path: profile_path)
+      update_code_signing_settings(
+        path: File.join(MOBILE_ROOT, "ios", "Runner.xcodeproj"),
+        use_automatic_signing: false,
+        team_id: team_id,
+        targets: ["Runner"],
+        build_configurations: ["Release"],
+        code_sign_identity: "Apple Distribution",
+        profile_name: profile.fetch("Name"),
+        bundle_identifier: BUNDLE_ID,
+      )
+
+      export_options = File.join(MOBILE_ROOT, "build", "ExportOptions.plist")
+      FileUtils.mkdir_p(File.dirname(export_options))
+      File.write(export_options, <<~PLIST)
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>method</key><string>app-store-connect</string>
+          <key>teamID</key><string>#{team_id}</string>
+          <key>signingStyle</key><string>manual</string>
+          <key>signingCertificate</key><string>Apple Distribution</string>
+          <key>provisioningProfiles</key>
+          <dict><key>#{BUNDLE_ID}</key><string>#{profile.fetch('Name').encode(xml: :text)}</string></dict>
+          <key>uploadSymbols</key><true/>
+          <key>manageAppVersionAndBuildNumber</key><false/>
+        </dict>
+        </plist>
+      PLIST
+
+      name, number = flutter_release(:ios, "ipa", ["--export-options-plist=#{export_options}"])
+      ipa = Dir[File.join(MOBILE_ROOT, "build", "ios", "ipa", "*.ipa")].first
+      UI.user_error!("IPA introuvable") if ipa.nil?
+
+      upload_to_testflight(
+        api_key: api_key,
+        ipa: ipa,
+        app_identifier: BUNDLE_ID,
+        skip_submission: true,
+        skip_waiting_for_build_processing: true,
+      )
+      UI.success("Version #{name} (#{number}) envoyée sur TestFlight")
+    ensure
+      delete_keychain(name: keychain_name)
+    end
+  end
+end

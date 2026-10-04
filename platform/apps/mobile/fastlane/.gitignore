@@ -1,0 +1,5 @@
+# Fichiers produits par fastlane à chaque exécution.
+report.xml
+Preview.html
+screenshots/
+test_output/

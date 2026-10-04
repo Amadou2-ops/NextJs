@@ -1,0 +1,473 @@
+name: platform-ci
+
+on:
+  push:
+    paths:
+      - "platform/**"
+      - ".github/workflows/platform-ci.yml"
+  pull_request:
+    paths:
+      - "platform/**"
+      - ".github/workflows/platform-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  database:
+    name: Base de données (migrations, tests, intégrité)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: platform
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: transfertplus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/transfertplus
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/transfertplus_test
+      DATABASE_SSL_MODE: disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict
+        run: pnpm --filter @transfertplus/db run typecheck
+      - name: Données de référence à jour avec leur générateur
+        run: |
+          pnpm --filter @transfertplus/db run generate:reference
+          git diff --exit-code -- db/seed
+      - name: Migrations sur base vierge puis relance (idempotence)
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm db:status
+      - name: Tests SQL, concurrence et intégrité
+        run: pnpm db:test
+      - name: Contrôle d'intégrité de la base migrée
+        run: pnpm db:verify
+
+  api:
+    name: API (typage, lint, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: platform
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: transfertplus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/transfertplus_api_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict
+        run: pnpm --filter @transfertplus/api run typecheck
+      - name: Lint
+        run: pnpm --filter @transfertplus/api run lint
+      - name: Tests (unitaires, propriétés, HTTP, sécurité, concurrence, intégration PostgreSQL) et couverture
+        run: pnpm --filter @transfertplus/api run test:coverage
+      - name: Rapport de couverture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage
+          path: platform/apps/api/coverage
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Compilation
+        run: pnpm --filter @transfertplus/api run build
+
+  web:
+    name: Site client (typage, lint, tests, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: platform
+    env:
+      # Valeurs factices : le build ne contacte aucun service.
+      API_BASE_URL: http://127.0.0.1:8080
+      APP_ORIGIN: https://app.transfertplus.example
+      SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict
+        run: pnpm --filter @transfertplus/web run typecheck
+      - name: Lint
+        run: pnpm --filter @transfertplus/web run lint
+      - name: Tests du serveur intermédiaire (BFF)
+        run: pnpm --filter @transfertplus/web run test
+      - name: Build de production
+        run: pnpm --filter @transfertplus/web run build
+
+  admin:
+    name: Back-office (typage, lint, tests, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: platform
+    env:
+      # Valeurs factices : le build ne contacte aucun service.
+      API_BASE_URL: http://127.0.0.1:8080
+      APP_ORIGIN: https://admin.transfertplus.example
+      SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict
+        run: pnpm --filter @transfertplus/admin run typecheck
+      - name: Lint
+        run: pnpm --filter @transfertplus/admin run lint
+      - name: Tests du serveur intermédiaire (BFF)
+        run: pnpm --filter @transfertplus/admin run test
+      - name: Build de production
+        run: pnpm --filter @transfertplus/admin run build
+
+  e2e:
+    name: Bout en bout (site client et back-office sur pile réelle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: platform
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432
+      E2E_REDIS_URL: redis://127.0.0.1:6379/9
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typage strict et lint des parcours
+        run: |
+          pnpm --filter @transfertplus/e2e run typecheck
+          pnpm --filter @transfertplus/e2e run lint
+      - name: Builds de production du site client et du back-office
+        env:
+          # La configuration est lue au démarrage, pas au build.
+          API_BASE_URL: http://127.0.0.1:8080
+          APP_ORIGIN: http://localhost:3000
+          SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: |
+          pnpm --filter @transfertplus/web run build
+          pnpm --filter @transfertplus/admin run build
+      - name: Navigateur Chromium
+        run: pnpm --filter @transfertplus/e2e exec playwright install --with-deps chromium
+      - name: Parcours de bout en bout
+        run: pnpm --filter @transfertplus/e2e run e2e
+      - name: Rapport, traces et journaux de la pile
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-rapport
+          path: |
+            platform/e2e/playwright-report
+            platform/e2e/test-results
+            platform/e2e/.runtime/*.log
+          retention-days: 14
+
+  e2e-mobile:
+    name: Bout en bout (application mobile sur pile réelle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: platform
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432
+      E2E_REDIS_URL: redis://127.0.0.1:6379/9
+      E2E_SUITE: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+      - name: Dépendances de l'application
+        working-directory: platform/apps/mobile
+        run: flutter pub get --enforce-lockfile
+      - name: Parcours de l'application mobile (inscription attestée, portefeuille, envoi, reprise de session)
+        run: pnpm --filter @transfertplus/e2e run e2e --timeout=5m
+      - name: Journaux de la pile
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-mobile-journaux
+          path: platform/e2e/.runtime/*.log
+          retention-days: 14
+
+  monitoring:
+    name: Surveillance (règles d'alerte testées, Alertmanager, Loki, Alloy, Compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Versions des images de compose.production.yaml ; empreintes des archives officielles.
+      PROMETHEUS_VERSION: 3.5.0
+      PROMETHEUS_SHA256: e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a
+      ALERTMANAGER_VERSION: 0.28.1
+      ALERTMANAGER_SHA256: 5ac7ab5e4b8ee5ce4d8fb0988f9cb275efcc3f181b4b408179fafee121693311
+      LOKI_VERSION: 3.5.5
+      LOKI_SHA256: eefea8fd3701f2aae77ee7130be10973d51a33d9fa942075b8cefbf7f930868b
+      ALLOY_VERSION: 1.10.2
+      ALLOY_SHA256: 288e36c29710123f1f33dc074b84e9c19efeb975f4f638b8a39d2bd1a7ad1c0e
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils (archives vérifiées par empreinte)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dl" "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/dl"
+          fetch() { curl -fsSL --retry 3 -o "$1" "$2"; echo "$3  $1" | sha256sum -c -; }
+          fetch prometheus.tgz "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" "$PROMETHEUS_SHA256"
+          fetch alertmanager.tgz "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz" "$ALERTMANAGER_SHA256"
+          fetch loki.zip "https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}/loki-linux-amd64.zip" "$LOKI_SHA256"
+          fetch alloy.zip "https://github.com/grafana/alloy/releases/download/v${ALLOY_VERSION}/alloy-linux-amd64.zip" "$ALLOY_SHA256"
+          tar -xzf prometheus.tgz --strip-components=1 -C "$RUNNER_TEMP/bin" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          tar -xzf alertmanager.tgz --strip-components=1 -C "$RUNNER_TEMP/bin" "alertmanager-${ALERTMANAGER_VERSION}.linux-amd64/amtool"
+          unzip -q loki.zip && mv loki-linux-amd64 "$RUNNER_TEMP/bin/loki"
+          unzip -q alloy.zip && mv alloy-linux-amd64 "$RUNNER_TEMP/bin/alloy"
+          chmod +x "$RUNNER_TEMP/bin/"*
+      - name: Configurations, tests des règles d'alerte, tableau et chaîne des journaux
+        run: platform/deploy/monitoring/tests/verifier.sh "$RUNNER_TEMP/bin"
+      - name: Pile Compose de production valide
+        working-directory: platform/deploy
+        run: |
+          set -euo pipefail
+          # Fichiers factices : seule la structure est vérifiée ici.
+          for f in env/*.env.example; do cp "$f" "${f%.example}"; done
+          touch env/api.secrets.env env/web.secrets.env env/admin.secrets.env
+          touch secrets/supabase-ca.crt secrets/tsa-ca.pem secrets/alertmanager-slack-url \
+            secrets/alertmanager-pagerduty-key secrets/alertmanager-deadman-url secrets/grafana-admin-password
+          docker compose -f compose.production.yaml --env-file env/edge.env config -q
+          # Ports publiés sur l'hôte : Caddy seul en public ; Grafana sur 127.0.0.1 ; rien d'autre.
+          docker compose -f compose.production.yaml --env-file env/edge.env config --format json | python3 -c '
+          import json, sys
+          services = json.load(sys.stdin)["services"]
+          published = {(name, p.get("host_ip", ""), str(p["published"])) for name, svc in services.items() for p in svc.get("ports", [])}
+          expected = {("caddy", "", "80"), ("caddy", "", "443"), ("grafana", "127.0.0.1", "3300")}
+          if published != expected:
+              sys.exit(f"ports publiés inattendus : {sorted(published - expected)} ; manquants : {sorted(expected - published)}")
+          '
+
+
+  mobile:
+    name: Application mobile (analyse, tests, build Android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: platform/apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Analyse statique stricte
+        run: flutter analyze --fatal-infos
+      - name: Tests (signature canonique vérifiée contre les vecteurs de l'API)
+        run: flutter test
+      - name: Build Android (compile le canal natif Keystore / Play Integrity)
+        run: flutter build apk --debug --dart-define=API_BASE_URL=https://api.transfertplus.example
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: platform/apps/mobile
+      - name: Procédures de publication (Fastfile et dépendances figées)
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          LC_ALL: C.UTF-8
+        run: bundle exec fastlane lanes
+
+  mobile-ios:
+    name: Application mobile (build iOS)
+    # Le SDK Stripe iOS actuel exige le SDK iOS 26 (Xcode 26).
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: platform/apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Build iOS sans signature (compile le canal Secure Enclave / App Attest)
+        run: flutter build ios --debug --no-codesign --dart-define=API_BASE_URL=https://api.transfertplus.example
+
+  images:
+    name: Images de conteneur (build et analyse)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [api, migrate, web, admin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Construction (sans publication)
+        uses: docker/build-push-action@v6
+        with:
+          context: platform
+          file: platform/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: transfertplus-${{ matrix.target }}:ci
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+      - name: L'image s'exécute en utilisateur non privilégié
+        run: test "$(docker image inspect transfertplus-${{ matrix.target }}:ci --format '{{.Config.User}}')" = "65532:65532"
+      - name: Analyse de vulnérabilités
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: transfertplus-${{ matrix.target }}:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table

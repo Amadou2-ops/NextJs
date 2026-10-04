@@ -1,0 +1,18 @@
+# Contexte de build minimal : sources et manifeste figé uniquement.
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/*.p12
+**/*.jks
+apps/mobile
+deploy
+docker-compose.yml
+.git

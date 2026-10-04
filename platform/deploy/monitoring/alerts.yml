@@ -1,0 +1,389 @@
+# Règles d'alerte TransfertPlus.
+#
+# Gravité :
+#   critical : astreinte immédiate (argent des clients, intégrité du registre,
+#              service indisponible) ;
+#   warning  : canal d'exploitation, à traiter dans la journée.
+# Équipe (team) : exploitation (défaut) ou conformite (LCB-FT).
+#
+# Seuils alignés sur la configuration par défaut de l'API (env.ts) :
+# rapprochement toutes les 60 min, ancrage toutes les 6 h, listes de
+# sanctions rafraîchies toutes les 6 h et refusées au-delà de 48 h, taux de
+# change refusés au-delà de 120 min. Les fraîcheurs des tâches se calculent
+# sur la période publiée par le worker (transfertplus_job_interval_seconds) :
+# elles suivent un changement de configuration sans modifier ce fichier.
+#
+# Testées par `promtool test rules alerts.test.yml` (CI).
+groups:
+  - name: disponibilite
+    rules:
+      - alert: CibleInjoignable
+        expr: up{job=~"api|worker"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} {{ $labels.instance }} ne répond plus aux collectes"
+          description: "Processus arrêté, conteneur en redémarrage ou collecte des indicateurs en échec (base injoignable : réponse 503)."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: WorkerAbsent
+        expr: absent(up{job="worker"} == 1)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Aucun worker en service"
+          description: "Sans worker : ni rapprochement du registre, ni traitement des webhooks, ni paiements sortants, ni mise à jour des listes de sanctions."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: ApiAbsente
+        expr: absent(up{job="api"} == 1)
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Aucune réplique de l'API en service"
+          description: "Site, back-office et application mobile hors service."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: SurveillanceDegradee
+        expr: up{job=~"loki|alertmanager"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }} injoignable"
+          description: "Journaux ou notifications d'alerte interrompus (la veille externe signale la perte d'Alertmanager)."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: JournauxNonCollectes
+        expr: up{job="loki"} == 1 and on() sum(rate(loki_distributor_lines_received_total[15m])) == 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Aucune ligne de journal reçue par Loki depuis 15 min"
+          description: "Collecteur Alloy arrêté, ou fichiers json-file illisibles (voir docker compose logs alloy)."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: VeilleAlertes
+        # Toujours active : relayée vers un service externe de « veille »
+        # (homme mort) qui alerte si elle cesse d'arriver — Prometheus,
+        # Alertmanager ou l'hôte entier hors service.
+        expr: vector(1)
+        labels: { severity: none }
+        annotations:
+          summary: "Chaîne d'alerte opérationnelle"
+
+  - name: registre
+    rules:
+      - alert: RegistreIntegriteRompue
+        expr: transfertplus_ledger_reconciliation_healthy == 0 and transfertplus_ledger_reconciliation_last_finished_timestamp_seconds > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Rapprochement du registre en anomalie"
+          description: "Le dernier rapprochement a relevé une rupture de la chaîne de hachage, un solde ou une balance incohérents, ou a échoué. Consulter Registre > Rapprochements dans le back-office ; l'avancée du point de contrôle est suspendue."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: RegistreAlerteIntegriteEmise
+        expr: increase(transfertplus_outbox_events_total{event_type="ledger.integrity_breach"}[1h]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Événement ledger.integrity_breach émis"
+          description: "{{ $value | humanize }} rupture(s) d'intégrité signalée(s) par le worker durant la dernière heure."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: RegistreRapprochementEnRetard
+        expr: |
+          time() - transfertplus_ledger_reconciliation_last_finished_timestamp_seconds
+            > ignoring(task) 3 * transfertplus_job_interval_seconds{task="ledger-reconciliation"}
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Aucun rapprochement du registre terminé depuis {{ $value | humanizeDuration }}"
+          description: "Plus de trois périodes sans rapprochement : l'intégrité du registre n'est plus vérifiée."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: RegistreAncrageEnRetard
+        expr: |
+          time() - transfertplus_ledger_last_anchor_timestamp_seconds
+            > ignoring(task) 2 * transfertplus_job_interval_seconds{task="ledger-chain-anchor"}
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Aucun ancrage RFC 3161 du registre depuis {{ $value | humanizeDuration }}"
+          description: "Autorité d'horodatage injoignable ou réponse refusée : la preuve externe d'antériorité ne progresse plus."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: taches
+    rules:
+      - alert: TacheSansSucces
+        expr: time() - transfertplus_job_last_success_timestamp_seconds > 3 * transfertplus_job_interval_seconds
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Tâche {{ $labels.task }} sans exécution réussie depuis plus de trois périodes"
+          description: "Voir les journaux du worker (« échec de la tâche », task={{ $labels.task }})."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: TacheEchecsRepetes
+        expr: increase(transfertplus_job_runs_total{outcome="failed"}[1h]) > 3
+        labels: { severity: warning }
+        annotations:
+          summary: "Tâche {{ $labels.task }} : {{ $value | humanize }} échecs en une heure"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: webhooks
+    rules:
+      - alert: WebhooksEnEchec
+        expr: sum by (source) (transfertplus_webhook_events{status="failed"}) > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} webhook(s) {{ $labels.source }} en échec de traitement"
+          description: "Ils sont rejoués par la tâche webhook-retry ; au-delà du nombre maximal d'essais, ils sont abandonnés (alerte WebhookAbandonne)."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: WebhooksFileEnRetard
+        expr: transfertplus_webhook_backlog_oldest_age_seconds > 900
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Webhook en attente depuis {{ $value | humanizeDuration }}"
+          description: "Les statuts de paiement et de KYC ne progressent plus."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: WebhooksFileEnRetard
+        expr: transfertplus_webhook_backlog_oldest_age_seconds > 3600
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Webhook en attente depuis {{ $value | humanizeDuration }}"
+          description: "Les statuts de paiement et de KYC ne progressent plus depuis plus d'une heure."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: WebhookAbandonne
+        expr: increase(transfertplus_outbox_events_total{event_type="integrations.webhook_exhausted"}[1h]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Webhook prestataire abandonné après le nombre maximal d'essais"
+          description: "L'état d'un paiement, d'un versement ou d'une vérification peut ne plus refléter celui du prestataire : rapprocher manuellement."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: WebhooksRefusesEnRafale
+        expr: sum by (source, reason) (increase(transfertplus_webhook_rejections_total[15m])) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} webhooks {{ $labels.source }} refusés en 15 min ({{ $labels.reason }})"
+          description: "Tentative de falsification, ou secret de signature désaligné après une rotation chez le prestataire."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: outbox
+    rules:
+      - alert: OutboxEvenementsAbandonnes
+        expr: transfertplus_outbox_events{status="dead"} > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value | humanize }} événement(s) de l'outbox abandonné(s)"
+          description: "Notifications ou alertes internes jamais publiées : consulter integrations.outbox (status = 'dead')."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: OutboxEngorgee
+        expr: transfertplus_outbox_events{status="pending"} > 500
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} événements en attente de publication"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: NotificationsClientsBloquees
+        expr: transfertplus_customer_notifications_stalled > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} SMS de clients non confirmés depuis plus de 30 min"
+          description: "Prestataire SMS indisponible ou refusant les envois : vérifier Twilio et les erreurs dans integrations.customer_notifications."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: paiements
+    rules:
+      - alert: PaiementAnomalieCritique
+        expr: increase(transfertplus_outbox_events_total{event_type=~"payments\\.(payin_amount_mismatch|payout_amount_mismatch|refund_amount_mismatch|refund_failed|outcome_unknown|payout_reversed_after_completion|dispute_funds_withdrawn)"}[1h]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Anomalie de paiement : {{ $labels.event_type }}"
+          description: "Montant divergent, remboursement en échec, issue inconnue, versement annulé après réussite ou rétrofacturation : rapprocher avec le prestataire avant toute nouvelle opération sur le transfert."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: PaiementAnomalie
+        expr: increase(transfertplus_outbox_events_total{event_type=~"payments\\.(float_insufficient|late_payin|payout_waiting|fee_not_recorded)"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Signal de paiement : {{ $labels.event_type }}"
+          description: "Préfinancement insuffisant, paiement entrant tardif, versement en attente ou frais prestataire non comptabilisés : à traiter dans la journée."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: transferts
+    rules:
+      - alert: RemboursementBloque
+        expr: transfertplus_transfers_oldest_age_seconds{status="refund_pending"} > 3600
+        labels: { severity: critical }
+        annotations:
+          summary: "Remboursement en attente depuis {{ $value | humanizeDuration }}"
+          description: "Des fonds de client ne lui sont pas rendus."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: VersementBloque
+        expr: transfertplus_transfers_oldest_age_seconds{status=~"payout_pending|payout_processing"} > 7200
+        labels: { severity: warning }
+        annotations:
+          summary: "Transfert en {{ $labels.status }} depuis {{ $value | humanizeDuration }}"
+          description: "Vérifier le statut chez le prestataire de versement (tâche payment-sync)."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: VersementEnEchec
+        expr: transfertplus_transfers_open{status="payout_failed"} > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanize }} transfert(s) en échec de versement non traités"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: FinancementBloque
+        expr: transfertplus_transfers_oldest_age_seconds{status="funding_processing"} > 7200
+        labels: { severity: warning }
+        annotations:
+          summary: "Paiement entrant en cours depuis {{ $value | humanizeDuration }}"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: conformite
+    rules:
+      - alert: ListesSanctionsManquantes
+        expr: transfertplus_aml_sanctions_lists_current < 2
+        for: 15m
+        labels: { severity: critical, team: conformite }
+        annotations:
+          summary: "{{ $value | humanize }} liste(s) de sanctions courante(s) au lieu de 2 (OFAC, ONU)"
+          description: "Le criblage refuse les transferts tant que les listes exigées ne sont pas importées."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: ListesSanctionsAnciennes
+        expr: time() - transfertplus_aml_sanctions_lists_oldest_import_timestamp_seconds > 30 * 3600 and transfertplus_aml_sanctions_lists_current > 0
+        labels: { severity: warning, team: conformite }
+        annotations:
+          summary: "Liste de sanctions importée il y a {{ $value | humanizeDuration }}"
+          description: "Au-delà de 48 h (AML_LISTS_MAX_AGE_HOURS), le criblage refuse les transferts."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: ListesSanctionsAnciennes
+        expr: time() - transfertplus_aml_sanctions_lists_oldest_import_timestamp_seconds > 44 * 3600 and transfertplus_aml_sanctions_lists_current > 0
+        labels: { severity: critical, team: conformite }
+        annotations:
+          summary: "Liste de sanctions importée il y a {{ $value | humanizeDuration }}"
+          description: "Moins de quatre heures avant le refus de tous les transferts par le criblage."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: ListeSanctionsRefusee
+        expr: increase(transfertplus_outbox_events_total{event_type="aml.list_rejected"}[6h]) > 0
+        labels: { severity: warning, team: conformite }
+        annotations:
+          summary: "Une nouvelle version de liste a été refusée à l'import"
+          description: "Format inattendu ou chute anormale du nombre d'entrées : la version précédente reste en vigueur."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: AlertesBloquantesEnAttente
+        expr: sum(transfertplus_aml_alerts_open{blocking="true"}) > 0
+        for: 4h
+        labels: { severity: warning, team: conformite }
+        annotations:
+          summary: "{{ $value | humanize }} alerte(s) LCB-FT bloquante(s) non traitée(s) depuis plus de 4 h"
+          description: "Des transferts restent retenus en attente de décision de la conformité."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: RevueConformiteEnRetard
+        expr: transfertplus_transfers_oldest_age_seconds{status="compliance_review"} > 86400
+        labels: { severity: warning, team: conformite }
+        annotations:
+          summary: "Transfert en revue de conformité depuis {{ $value | humanizeDuration }}"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: change-et-paiements
+    rules:
+      - alert: TauxDeChangeAnciens
+        expr: time() - transfertplus_fx_rates_last_timestamp_seconds > 5400
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Dernier taux de change vieux de {{ $value | humanizeDuration }}"
+          description: "Au-delà de 120 min (FX_MAX_RATE_AGE_MINUTES), aucun devis n'est plus émis."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: TauxDeChangeAnciens
+        expr: time() - transfertplus_fx_rates_last_timestamp_seconds > 7200
+        labels: { severity: critical }
+        annotations:
+          summary: "Dernier taux de change vieux de {{ $value | humanizeDuration }} : devis refusés"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: TauxDeChangeRefuse
+        expr: increase(transfertplus_outbox_events_total{event_type="fx.rate_rejected"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Taux de change refusé (écart anormal avec la référence)"
+          description: "Le fournisseur a publié un taux hors bornes ; il n'est pas utilisé."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: PrestatairePaiementCoupe
+        expr: transfertplus_payment_circuit_open == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disjoncteur ouvert pour {{ $labels.provider }}"
+          description: "Les appels au prestataire sont suspendus après des échecs répétés."
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: PrestatairePaiementCoupe
+        expr: transfertplus_payment_circuit_open == 1
+        for: 30m
+        labels: { severity: critical }
+        annotations:
+          summary: "Disjoncteur ouvert pour {{ $labels.provider }} depuis plus de 30 min"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+  - name: api
+    rules:
+      - alert: ApiErreursServeur
+        expr: |
+          sum(rate(transfertplus_http_request_duration_seconds_count{status_class="5xx"}[5m]))
+            / sum(rate(transfertplus_http_request_duration_seconds_count[5m])) > 0.02
+          and sum(rate(transfertplus_http_request_duration_seconds_count[5m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} de réponses 5xx sur l'API"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: ApiErreursServeur
+        expr: |
+          sum(rate(transfertplus_http_request_duration_seconds_count{status_class="5xx"}[5m]))
+            / sum(rate(transfertplus_http_request_duration_seconds_count[5m])) > 0.10
+          and sum(rate(transfertplus_http_request_duration_seconds_count[5m])) > 0.1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} de réponses 5xx sur l'API"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: ApiLente
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(transfertplus_http_request_duration_seconds_bucket{route!="unmatched"}[5m]))) > 2
+          and sum(rate(transfertplus_http_request_duration_seconds_count[5m])) > 0.1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "95e centile des requêtes de l'API à {{ $value | humanize }} s"
+          runbook: "deploy/README.md#surveillance-et-alertes"
+
+      - alert: BoucleEvenementsSaturee
+        expr: transfertplus_nodejs_eventloop_lag_p99_seconds > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Boucle d'événements de {{ $labels.job }} {{ $labels.instance }} saturée ({{ $value | humanize }} s au 99e centile)"
+          runbook: "deploy/README.md#surveillance-et-alertes"

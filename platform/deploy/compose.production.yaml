@@ -1,0 +1,383 @@
+# Pile de production TransfertPlus (un hôte). PostgreSQL est géré (Supabase,
+# TLS vérifié) et n'apparaît donc pas ici.
+#
+#   docker compose -f deploy/compose.production.yaml --env-file deploy/env/edge.env run --rm migrate
+#   docker compose -f deploy/compose.production.yaml --env-file deploy/env/edge.env up -d
+#
+# Images : ghcr.io/amadou2-ops/transfertplus-<composant>:<version> (workflow
+# platform-release), référencées par empreinte en production (TP_IMAGE_*).
+#
+# Surveillance (monitoring/, README « Surveillance et alertes ») : Prometheus
+# et ses règles d'alerte testées, Alertmanager, Loki et Alloy (journaux de
+# tous les conteneurs), Grafana (consultation par tunnel SSH seulement).
+#
+# Durcissement appliqué à chaque service applicatif : système de fichiers en
+# lecture seule, aucune capacité Linux, pas d'élévation de privilèges,
+# utilisateur non privilégié, limites mémoire, processeur et nombre de
+# processus (deploy.resources.limits), journaux bornés.
+name: transfertplus
+
+# Journaux : json-file borné, chaque ligne annotée de son projet, de son
+# service Compose et de son conteneur (lus par Alloy, envoyés à Loki).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+    labels: "com.docker.compose.project,com.docker.compose.service"
+    tag: "{{.Name}}"
+
+x-hardened: &hardened
+  read_only: true
+  user: "65532:65532"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  tmpfs:
+    - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+  logging: *logging
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?}
+      API_DOMAIN: ${API_DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:?}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m"]
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
+      admin: { condition: service_healthy }
+    networks: [edge]
+    logging: *logging
+
+  api:
+    <<: *hardened
+    image: ${TP_IMAGE_API:-ghcr.io/amadou2-ops/transfertplus-api:latest}
+    env_file: [env/api.env, env/api.secrets.env]
+    secrets:
+      - source: supabase-ca
+        target: /run/secrets/supabase-ca.crt
+      - source: tsa-ca
+        target: /run/secrets/tsa-ca.pem
+    deploy:
+      replicas: 2
+      resources:
+        limits: { memory: 768M, cpus: "1.5", pids: 256 }
+    depends_on:
+      redis: { condition: service_healthy }
+    # monitoring : collecte des métriques (METRICS_PORT), jamais publiée.
+    networks: [edge, backend, monitoring]
+
+  worker:
+    <<: *hardened
+    image: ${TP_IMAGE_API:-ghcr.io/amadou2-ops/transfertplus-api:latest}
+    command: ["dist/worker.js"]
+    # Le worker n'expose pas de port HTTP : pas de sonde de santé applicative.
+    healthcheck: { disable: true }
+    env_file: [env/api.env, env/api.secrets.env]
+    secrets:
+      - source: supabase-ca
+        target: /run/secrets/supabase-ca.crt
+      - source: tsa-ca
+        target: /run/secrets/tsa-ca.pem
+    deploy:
+      replicas: 1
+      resources:
+        limits: { memory: 768M, cpus: "1", pids: 256 }
+    depends_on:
+      redis: { condition: service_healthy }
+    networks: [backend, egress, monitoring]
+
+  web:
+    <<: *hardened
+    image: ${TP_IMAGE_WEB:-ghcr.io/amadou2-ops/transfertplus-web:latest}
+    env_file: [env/web.env, env/web.secrets.env]
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+      - /app/apps/web/.next/cache:size=128m,uid=65532,gid=65532
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1", pids: 256 }
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [edge]
+
+  admin:
+    <<: *hardened
+    image: ${TP_IMAGE_ADMIN:-ghcr.io/amadou2-ops/transfertplus-admin:latest}
+    env_file: [env/admin.env, env/admin.secrets.env]
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+      - /app/apps/admin/.next/cache:size=64m,uid=65532,gid=65532
+    deploy:
+      resources:
+        limits: { memory: 384M, cpus: "0.5", pids: 256 }
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [edge]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes", "--protected-mode", "yes", "--rename-command", "FLUSHALL", "", "--rename-command", "FLUSHDB", "", "--rename-command", "CONFIG", ""]
+    user: "999:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+    networks: [backend]
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=8GB
+      - --web.listen-address=:9090
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 1G, cpus: "1", pids: 256 }
+    depends_on:
+      alertmanager: { condition: service_healthy }
+    networks: [monitoring]
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # Instance unique : pas de grappe (aucun port de réplication ouvert).
+      - --cluster.listen-address=
+      - --web.listen-address=:9093
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    secrets:
+      - source: alertmanager-slack-url
+        target: /run/secrets/alertmanager-slack-url
+      - source: alertmanager-pagerduty-key
+        target: /run/secrets/alertmanager-pagerduty-key
+      - source: alertmanager-deadman-url
+        target: /run/secrets/alertmanager-deadman-url
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5", pids: 128 }
+    # egress : envoi des notifications (Slack, PagerDuty, veille externe).
+    networks: [monitoring, egress]
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.5.5
+    restart: unless-stopped
+    user: "10001:10001"
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - ./monitoring/loki-rules:/etc/loki/rules:ro
+      - loki-data:/loki
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=64m,mode=1777,noexec,nosuid,nodev"]
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3100/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { memory: 1G, cpus: "1", pids: 256 }
+    networks: [monitoring]
+    logging: *logging
+
+  # Lecture des fichiers json-file de l'hôte, en lecture seule, SANS le socket
+  # Docker. Utilisateur root sans aucune capacité : il ne lit que les fichiers
+  # dont root est propriétaire (journaux des conteneurs), rien d'autre.
+  alloy:
+    image: grafana/alloy:v1.10.2
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - alloy-data:/var/lib/alloy/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m,mode=1777,noexec,nosuid,nodev"]
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5", pids: 128 }
+    depends_on:
+      loki: { condition: service_healthy }
+    networks: [monitoring]
+    logging: *logging
+
+  # Consultation (tableaux, journaux, alertes) : port publié sur 127.0.0.1
+  # seulement, atteint par tunnel SSH. Aucun appel sortant (mises à jour,
+  # extensions, avatars) ; comptes créés par l'administrateur uniquement.
+  grafana:
+    image: grafana/grafana:12.1.1
+    restart: unless-stopped
+    user: "472:472"
+    ports:
+      - "127.0.0.1:3300:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_LOGIN_MAXIMUM_INACTIVE_LIFETIME_DURATION: 2h
+      GF_AUTH_LOGIN_MAXIMUM_LIFETIME_DURATION: 12h
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      GF_LOG_MODE: console
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    secrets:
+      - source: grafana-admin-password
+        target: /run/secrets/grafana-admin-password
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=64m,mode=1777,noexec,nosuid,nodev"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5", pids: 256 }
+    depends_on:
+      prometheus: { condition: service_healthy }
+      loki: { condition: service_healthy }
+    # monitoring-ui : seul réseau non interne de la surveillance, requis pour
+    # publier le port local ; Grafana n'émet aucun appel sortant.
+    networks: [monitoring, monitoring-ui]
+    logging: *logging
+
+  # Tâche ponctuelle : migrations puis contrôle d'intégrité, avant tout déploiement.
+  migrate:
+    <<: *hardened
+    image: ${TP_IMAGE_MIGRATE:-ghcr.io/amadou2-ops/transfertplus-migrate:latest}
+    restart: "no"
+    profiles: [migrate]
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1", pids: 128 }
+    env_file: [env/migrate.env]
+    secrets:
+      - source: supabase-ca
+        target: /run/secrets/supabase-ca.crt
+    networks: [egress]
+
+networks:
+  # Trafic public entrant (Caddy) et appels des BFF vers l'API.
+  edge: {}
+  # Redis : aucun accès à Internet.
+  backend:
+    internal: true
+  # Sorties vers les prestataires et la base gérée.
+  egress: {}
+  # Métriques de l'API et du worker, Prometheus, Alertmanager : sans accès à Internet.
+  monitoring:
+    internal: true
+  # Publication du port local de Grafana (127.0.0.1:3300).
+  monitoring-ui: {}
+
+volumes:
+  caddy-data:
+  caddy-config:
+  redis-data:
+  prometheus-data:
+  alertmanager-data:
+  loki-data:
+  alloy-data:
+  grafana-data:
+
+secrets:
+  supabase-ca:
+    file: ./secrets/supabase-ca.crt
+  tsa-ca:
+    file: ./secrets/tsa-ca.pem
+  # Destinations des alertes (propriétaire 65534, droits 0400 : voir README).
+  alertmanager-slack-url:
+    file: ./secrets/alertmanager-slack-url
+  alertmanager-pagerduty-key:
+    file: ./secrets/alertmanager-pagerduty-key
+  alertmanager-deadman-url:
+    file: ./secrets/alertmanager-deadman-url
+  # Mot de passe initial du compte administrateur de Grafana (propriétaire 472, droits 0400).
+  grafana-admin-password:
+    file: ./secrets/grafana-admin-password

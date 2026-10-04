@@ -1,0 +1,84 @@
+// Grafana Alloy — collecte des journaux des conteneurs de la pile vers Loki.
+//
+// Lit les fichiers du pilote json-file (/var/lib/docker/containers, monté en
+// lecture seule) : AUCUN accès au socket Docker. Chaque service Compose
+// annote ses lignes (logging.options.labels / tag, compose.production.yaml) :
+// l'étiquette « service » vient de là, « level » du JSON de pino.
+
+local.file_match "conteneurs" {
+	path_targets = [{"__path__" = "/var/lib/docker/containers/*/*-json.log"}]
+	sync_period  = "10s"
+}
+
+loki.source.file "conteneurs" {
+	targets       = local.file_match.conteneurs.targets
+	forward_to    = [loki.process.conteneurs.receiver]
+	tail_from_end = true
+}
+
+loki.process "conteneurs" {
+	forward_to = [loki.write.loki.receiver]
+
+	// Enveloppe json-file : {"log": "...", "stream": "...", "time": "...", "attrs": {...}}
+	stage.json {
+		expressions = {
+			output    = "log",
+			stream    = "stream",
+			time      = "time",
+			project   = "attrs.\"com.docker.compose.project\"",
+			service   = "attrs.\"com.docker.compose.service\"",
+			container = "attrs.tag",
+		}
+	}
+
+	// Seuls les conteneurs de la pile TransfertPlus sont conservés (hôte
+	// partagé, conteneurs lancés hors Compose…).
+	stage.template {
+		source   = "decision"
+		template = "{{ if eq (print .project) \"transfertplus\" }}garder{{ else }}ecarter{{ end }}"
+	}
+
+	stage.drop {
+		source              = "decision"
+		value               = "ecarter"
+		drop_counter_reason = "conteneur_hors_pile"
+	}
+
+	stage.timestamp {
+		source = "time"
+		format = "RFC3339Nano"
+	}
+
+	stage.labels {
+		values = {
+			service   = "",
+			container = "",
+			stream    = "",
+		}
+	}
+
+	stage.output {
+		source = "output"
+	}
+
+	// Journaux applicatifs (pino) : le niveau devient une étiquette ; les
+	// lignes non JSON (Caddy, Redis…) passent inchangées.
+	stage.json {
+		expressions = {level = "level"}
+	}
+
+	stage.labels {
+		values = {level = ""}
+	}
+
+	stage.label_drop {
+		values = ["filename"]
+	}
+}
+
+loki.write "loki" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+	external_labels = {environment = "production"}
+}
