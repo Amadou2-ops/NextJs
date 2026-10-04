@@ -43,5 +43,5 @@ pnpm --filter @transfertplus/web test
 pnpm --filter @transfertplus/web build      # sortie autonome (.next/standalone)
 ```
 
-En production : `node .next/standalone/apps/web/server.js` après copie de
+En production (`pnpm --filter @transfertplus/web start`) : `node .next/standalone/apps/web/server.js` après copie de
 `.next/static` (et `public/` s'il existe) dans le dossier autonome.

@@ -250,9 +250,11 @@ l'API d'administration (phase 9).
   déchiffrement sur justification (`customers:read_pii`), tracé dans le
   journal d'audit chaîné, consultable et vérifiable (`/v1/admin/audit`).
 - **Amorçage** : `BOOTSTRAP_DATABASE_URL=… ADMIN_ENROLLMENT_URL=… pnpm
-  admin:bootstrap --email … --name … --ip-range …` crée le premier
-  super-administrateur (connexion propriétaire, refusé dès qu'un compte
-  existe).
+  admin:bootstrap --email … --name … --ip-range …`, exécuté deux fois, crée
+  le binôme fondateur de super-administrateurs (la double validation exige
+  deux personnes dès la première invitation) ; connexion propriétaire,
+  définitivement fermé après deux comptes ou la première invitation émise
+  par un membre (migration 0024).
 
 ## Tests
 

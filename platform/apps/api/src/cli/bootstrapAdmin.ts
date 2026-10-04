@@ -7,10 +7,13 @@ import { generateInvitationToken } from "../modules/backoffice/adminAuth.service
 import { allowedIpRangeSchema } from "../modules/backoffice/approvalActions.js";
 
 /**
- * Amorçage du premier super-administrateur (installation). S'exécute avec la
- * connexion PROPRIÉTAIRE du schéma (celle des migrations) : le rôle applicatif
- * n'a pas le droit d'appeler backoffice.bootstrap_super_admin, qui est en
- * outre refusée dès qu'un membre du personnel existe.
+ * Amorçage du binôme fondateur de super-administrateurs (installation) : à
+ * exécuter DEUX fois, une par fondateur, car toute attribution de droits
+ * exige ensuite la double validation (un demandeur et un approbateur
+ * distincts). S'exécute avec la connexion PROPRIÉTAIRE du schéma (celle des
+ * migrations) : le rôle applicatif n'a pas le droit d'appeler
+ * backoffice.bootstrap_super_admin, qui se ferme définitivement après deux
+ * comptes ou dès la première invitation émise par un membre (migration 0024).
  *
  *   BOOTSTRAP_DATABASE_URL=postgres://… ADMIN_ENROLLMENT_URL=https://admin…/enrolement \
  *     node dist/cli/bootstrapAdmin.js --email chef@… --name "Prénom Nom" --ip-range 203.0.113.0/24

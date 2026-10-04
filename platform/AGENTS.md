@@ -53,3 +53,18 @@ du dépôt suit le `AGENTS.md` racine).
 - Aucun script ou style inline hors nonce CSP ; nouvel hôte tiers = l'ajouter
   à `contentSecurityPolicy` (`src/proxy.ts`).
 - Avant de livrer : `pnpm --filter @transfertplus/web typecheck`, `lint`, `test`, `build`.
+
+## Back-office (`apps/admin`)
+
+- Même architecture BFF que `apps/web` (cookie `__Host-tpa_session`, clé de
+  chiffrement distincte). Seules les routes `/v1/admin/*` sont atteignables.
+- L'interface masque ce que le membre ne peut pas faire (`can(admin, …)`),
+  mais l'API et la base revérifient tout : ne jamais considérer le masquage
+  comme un contrôle d'accès.
+- Arguments liés aux actions (`.bind`) : ils transitent par le navigateur,
+  les revalider (`validId`, listes fermées) dans l'action.
+- Une action renvoyant une valeur à usage unique (lien d'enrôlement) la place
+  dans `ActionResult.secret` : la page n'est alors pas rafraîchie, pour ne
+  pas perdre la valeur.
+- Aucun script, style ni hôte tiers : la CSP n'autorise que `'self'` et le nonce.
+- Avant de livrer : `pnpm --filter @transfertplus/admin typecheck`, `lint`, `test`, `build`.
