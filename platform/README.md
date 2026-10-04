@@ -30,6 +30,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 16 | Tests de bout en bout : Playwright sur une pile réelle (base, Redis, API, worker, site, back-office) ; inscription, TOTP, passkeys, clé de sécurité du personnel, quatre yeux, transfert remboursé, bénéficiaire sanctionné retenu ; job CI | ✅ |
 | 17 | Surveillance : métriques Prometheus de l'API et du worker (latences, tâches, registre, webhooks, outbox, transferts, conformité), 41 règles d'alerte testées (`promtool` et chaîne des journaux de bout en bout), Alertmanager (PagerDuty, Slack, veille externe), journaux centralisés (Alloy → Loki) avec alertes, tableau Grafana ; job CI | ✅ |
 | 18 | Paramétrage depuis le back-office : marges de change, barèmes de frais, corridors, moyens d'encaissement, prestataires et pays, avec aperçu du prix client ; chaque modification en double validation, écrite par la base à l'identique de la demande approuvée et sans effet rétroactif (0026) | ✅ |
+| 19 | Parcours de bout en bout de l'application mobile : l'app Flutter réelle contre la pile réelle (inscription avec attestation App Attest, portefeuille, envoi, reprise de session signée), autorité d'attestation de test acceptée en développement seulement ; ouverture d'un portefeuille depuis l'app (manquante), actualisation des écrans et menus déroulants corrigés ; job CI | ✅ |
 
 ## Démarrage local
 

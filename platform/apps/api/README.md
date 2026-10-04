@@ -60,6 +60,9 @@ Garanties principales :
   App ID, compteur, environnement) ou Play Integrity (requestHash, application
   reconnue, certificat de signature, intégrité de l'appareil). Chaque requête
   sensible est ensuite signée (ES256 / EdDSA) avec un compteur anti-rejeu.
+  `APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH` remplace la racine Apple par une
+  autorité de test pour le parcours de bout en bout de l'application mobile :
+  la configuration la refuse hors `development` et `test`.
 - **TOTP** : RFC 6238, secret chiffré, un pas de temps n'est accepté qu'une
   fois (garanti en base).
 - **Passkeys** : clés résidentes, vérification de l'utilisateur exigée,

@@ -37,7 +37,9 @@ Côté API : `APPLE_APP_ATTEST_APP_IDS` (`ÉQUIPE.com.transfertplus.app`),
 ```bash
 flutter pub get --enforce-lockfile
 flutter analyze --fatal-infos
-flutter test
+flutter test                                                      # tests unitaires et de widgets
+# Parcours de bout en bout (application réelle contre la pile réelle) : voir e2e/README.md
+#   E2E_SUITE=mobile pnpm --filter @transfertplus/e2e e2e
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080      # émulateur Android, API locale
 flutter build appbundle --release --obfuscate --split-debug-info=build/symbols \
   --dart-define=API_BASE_URL=https://api.transfertplus.com --dart-define=PLAY_INTEGRITY_CLOUD_PROJECT=…

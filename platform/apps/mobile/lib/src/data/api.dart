@@ -175,6 +175,9 @@ class WalletApi {
 
   Future<List<Wallet>> wallets() async => [for (final item in asObject(await _api.send(HttpMethod.get, '/v1/wallets')).objects('wallets')) Wallet.fromJson(item)];
 
+  /// Ouverture d'un portefeuille : réservée à l'application (requête signée par la clé de l'appareil).
+  Future<Wallet> open(String currency) async => Wallet.fromJson(asObject(await _api.send(HttpMethod.post, '/v1/wallets', body: {'currency': currency}, signed: true)));
+
   Future<({List<StatementEntry> entries, String? nextCursor})> statement(String currency, {String? before}) async {
     final json = asObject(await _api.send(HttpMethod.get, '/v1/wallets/$currency/statement', query: {'limit': '50', 'before': ?before}));
     return (entries: [for (final item in json.objects('entries')) StatementEntry.fromJson(item)], nextCursor: json.optionalString('nextCursor'));

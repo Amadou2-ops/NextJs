@@ -1,7 +1,8 @@
 # Tests de bout en bout (`@transfertplus/e2e`)
 
 Playwright pilote le **site client** et le **back-office** en build de
-production, sur une pile réelle démarrée par `scripts/stack.ts` :
+production, et `flutter test` l'**application mobile** réelle, sur une pile
+réelle démarrée par `scripts/stack.ts` :
 
 - base PostgreSQL neuve `transfertplus_e2e` (migrations et données de référence) ;
 - Redis ;
@@ -23,12 +24,21 @@ E2E_REDIS_URL=redis://127.0.0.1:6379/9 \
 | `E2E_POSTGRES_URL` | Serveur PostgreSQL. Connexion propriétaire, sans nom de base : la base `transfertplus_e2e` y est recréée à chaque exécution |
 | `E2E_REDIS_URL` | Base Redis **dédiée**, vidée à chaque exécution (limiteurs de débit) |
 | `E2E_CHROMIUM_EXECUTABLE` | Facultatif : Chromium déjà installé, à la place de `playwright install chromium` |
+| `E2E_SUITE` | `web` (défaut : Playwright) ou `mobile` (application Flutter ; site et back-office non démarrés) |
+| `E2E_FLUTTER` | Facultatif : binaire Flutter (défaut : `flutter`) |
+
+Parcours mobile :
+
+```bash
+E2E_SUITE=mobile E2E_POSTGRES_URL=… E2E_REDIS_URL=… pnpm --filter @transfertplus/e2e e2e --timeout=5m   # arguments transmis à `flutter test`
+```
 
 Ports utilisés :
 - 8080 : API ;
 - 3000 : site client, sur `localhost`, comme exigé par WebAuthn ;
 - 3001 : back-office ;
-- 8099 : serveur des listes de criblage.
+- 8099 : serveur des listes de criblage ;
+- 8098 : composant sécurisé et services de contrôle du parcours mobile.
 
 Les journaux de chaque processus sont dans `.runtime/*.log`. En CI, le rapport, les traces et les journaux sont archivés en cas d'échec.
 
@@ -40,6 +50,7 @@ Les journaux de chaque processus sont dans `.runtime/*.log`. En CI, le rapport, 
 | `02-back-office.spec.ts` | Enrôlement du binôme fondateur (mot de passe et clé de sécurité matérielle) ; lien d'invitation à usage unique ; connexion par clé ; règle des quatre yeux sur une invitation ; enrôlement d'un agent du support et habilitations limitées ; chaîne d'audit intacte ; refus d'une autre origine ; déconnexion |
 | `03-transfert.spec.ts` | Client vérifié ; portefeuille crédité par un ajustement comptable validé à deux ; envoi de 100 EUR vers le Sénégal (devis garanti, bénéficiaire, code TOTP) ; remboursement automatique faute de route de paiement sortant ; registre équilibré et rapprochement sain ; bénéficiaire sanctionné retenu avec une alerte bloquante côté conformité |
 | `04-parametrage.spec.ts` | Remplacement d'un barème de frais demandé par un membre du binôme fondateur, approuvé par le second : sans effet avant l'approbation, signalé sur le barème visé, appliqué ensuite à l'aperçu du prix client, ancien barème terminé ; pays interdit jamais ouvert |
+| `apps/mobile/e2e_test/parcours_mobile_test.dart` | Application mobile réelle (écrans, client API, signature des requêtes, session) : inscription par code SMS avec enregistrement de l'appareil par attestation App Attest ; identité vérifiée ; portefeuille EUR ouvert par une requête signée ; envoi de 100 EUR vers le Sénégal confirmé par la biométrie, remboursé faute de route ; relance de l'application, session reprise par un renouvellement signé, rien d'affiché avant le déverrouillage |
 
 Chaque parcours vérifie aussi qu'aucune erreur JavaScript ni violation de la CSP ne s'est produite.
 
@@ -56,6 +67,9 @@ Tout passe par le vrai code, sauf ce que des services externes fourniraient :
 | Taux et corridor | Paramétrage initial (corridor France → Sénégal, marge, barème) et taux enregistrés comme par l'exploitant et la tâche `fx-refresh` ; le barème est ensuite remplacé depuis le back-office (`04-`) |
 | Prestataires de paiement | Non configurés : un transfert financé est remboursé, comme en production sans route |
 | Clés de sécurité, passkeys | Authentificateurs virtuels de Chromium (CTAP2) |
+| Composant sécurisé de l'iPhone (mobile) | Service local (`support/secureElement.ts`) : clé P-256, signatures ECDSA DER, attestation au format App Attest exact signée par une autorité racine de test. L'API ne l'accepte que via `APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH`, refusé hors développement et tests ; tout le reste (vérification, enregistrement, signature des requêtes, compteur) est le code de production |
+| Stockage sécurisé et biométrie (mobile) | Mémoire et authentification acceptée |
+| Approvisionnement du portefeuille (mobile) | Écriture d'ajustement de l'exploitant, en base |
 
 ## Écrire un parcours
 

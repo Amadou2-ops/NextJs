@@ -12,6 +12,8 @@ import pg from "pg";
 
 import { CONTEXT_FILE, RUNTIME_DIR } from "../support/context.js";
 import type { E2EContext, Founder } from "../support/context.js";
+import { startMobileControl } from "../support/mobileControl.js";
+import { TestSecureElement } from "../support/secureElement.js";
 
 /**
  * Pile réelle des tests de bout en bout, puis Playwright :
@@ -25,6 +27,13 @@ import type { E2EContext, Founder } from "../support/context.js";
  *   4. API (SMS de développement journalisés), worker, binôme fondateur du
  *      back-office, site client et back-office en build de production ;
  *   5. `playwright test` (arguments transmis), puis arrêt de tous les processus.
+ *
+ * E2E_SUITE=mobile : parcours de l'application Flutter (apps/mobile/e2e_test)
+ * à la place de Playwright. Le site et le back-office ne sont pas démarrés ;
+ * le composant sécurisé de l'appareil et les services externes (SMS, KYC,
+ * approvisionnement) sont fournis par support/mobileControl.ts, et l'API
+ * accepte l'autorité App Attest de TEST de la pile (développement seulement).
+ * Binaire Flutter : E2E_FLUTTER (défaut : `flutter`).
  *
  * Aucun prestataire n'est simulé côté API : sans route de paiement sortant
  * configurée, un transfert financé est remboursé (comportement de production).
@@ -41,6 +50,10 @@ const API_PORT = 8080;
 const WEB_PORT = 3000;
 const ADMIN_PORT = 3001;
 const LISTS_PORT = 8099;
+const MOBILE_CONTROL_PORT = 8098;
+const APP_ATTEST_APP_ID = "EQUIPE1234.com.transfertplus.app";
+const SUITE = process.env["E2E_SUITE"] ?? "web";
+if (SUITE !== "web" && SUITE !== "mobile") throw new Error(`E2E_SUITE inconnue : ${SUITE} (web ou mobile)`);
 const PII_KEY_ID = "pii-e2e-1";
 
 const postgresUrl = (process.env["E2E_POSTGRES_URL"] ?? "postgres://postgres:postgres@127.0.0.1:5432").replace(/\/+$/, "");
@@ -235,8 +248,12 @@ async function bootstrapFounder(email: string, name: string, enrollmentUrl: stri
 async function main(): Promise<number> {
   rmSync(RUNTIME_DIR, { recursive: true, force: true });
   mkdirSync(RUNTIME_DIR, { recursive: true });
-  const webStandalone = prepareStandalone("web");
-  const adminStandalone = prepareStandalone("admin");
+  const webStandalone = SUITE === "web" ? prepareStandalone("web") : null;
+  const adminStandalone = SUITE === "web" ? prepareStandalone("admin") : null;
+  // Autorité App Attest de test : l'API ne l'accepte qu'en développement.
+  const secureElement = await TestSecureElement.create(APP_ATTEST_APP_ID);
+  const attestRootPath = join(RUNTIME_DIR, "app-attest-test-root.pem");
+  writeFileSync(attestRootPath, secureElement.rootPem);
 
   step(`base ${DATABASE} : migrations, données de référence, corridor FR → SN`);
   await resetDatabase();
@@ -282,6 +299,8 @@ async function main(): Promise<number> {
     AML_OFAC_SDN_URL: `${listsUrl}/SDN.CSV`,
     AML_OFAC_ALT_URL: `${listsUrl}/ALT.CSV`,
     AML_UN_LIST_URL: `${listsUrl}/consolidated.xml`,
+    APPLE_APP_ATTEST_APP_IDS: APP_ATTEST_APP_ID,
+    APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH: attestRootPath,
   };
 
   step("API et worker (import des listes de criblage)");
@@ -297,6 +316,26 @@ async function main(): Promise<number> {
     await bootstrapFounder("fondateur.b@transfertplus.example", "Fondateur B", `${adminUrl}/enrolement`),
   ];
 
+  const context: E2EContext = { apiUrl, webUrl, adminUrl, ownerDatabaseUrl, apiLogFile, piiKeyId: PII_KEY_ID, piiKeyBase64, founders };
+  writeFileSync(CONTEXT_FILE, JSON.stringify(context, null, 2));
+
+  if (SUITE === "mobile") {
+    step("composant sécurisé et services de contrôle du parcours mobile");
+    servers.push(await startMobileControl(secureElement, MOBILE_CONTROL_PORT));
+    step("application mobile (flutter test e2e_test)");
+    const flutter = spawn(
+      process.env["E2E_FLUTTER"] ?? "flutter",
+      ["test", "e2e_test", `--dart-define=E2E_API_URL=${apiUrl}`, `--dart-define=E2E_CONTROL_URL=http://127.0.0.1:${MOBILE_CONTROL_PORT.toString()}`, ...process.argv.slice(2)],
+      { cwd: join(PLATFORM, "apps", "mobile"), env: process.env, stdio: "inherit" },
+    );
+    return new Promise((resolve) => {
+      flutter.on("exit", (code) => {
+        resolve(code ?? 1);
+      });
+    });
+  }
+  if (webStandalone === null || adminStandalone === null) throw new Error("builds du site et du back-office absents");
+
   step("site client et back-office (builds de production)");
   const bffEnv = (origin: string, port: number): NodeJS.ProcessEnv => ({
     ...process.env,
@@ -311,9 +350,6 @@ async function main(): Promise<number> {
   const adminLog = startServer("admin", process.execPath, ["server.js"], adminStandalone, bffEnv(adminUrl, ADMIN_PORT));
   await waitFor(`${webUrl}/`, "site client", webLog);
   await waitFor(`${adminUrl}/connexion`, "back-office", adminLog);
-
-  const context: E2EContext = { apiUrl, webUrl, adminUrl, ownerDatabaseUrl, apiLogFile, piiKeyId: PII_KEY_ID, piiKeyBase64, founders };
-  writeFileSync(CONTEXT_FILE, JSON.stringify(context, null, 2));
 
   step("Playwright");
   const playwright = spawn(process.execPath, [join(E2E_ROOT, "node_modules", "@playwright", "test", "cli.js"), "test", ...process.argv.slice(2)], {

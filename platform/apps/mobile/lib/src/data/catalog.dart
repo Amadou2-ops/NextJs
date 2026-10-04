@@ -42,6 +42,9 @@ const List<SendingCountry> sendingCountries = [
   SendingCountry('CA', 'Canada', 'CAD'),
 ];
 
+/// Devises des pays d'envoi, proposées à l'ouverture d'un portefeuille.
+final List<String> walletCurrencies = {for (final country in sendingCountries) country.currency}.toList(growable: false);
+
 const Map<String, String> mobileOperators = {
   'orange_money': 'Orange Money',
   'wave': 'Wave',

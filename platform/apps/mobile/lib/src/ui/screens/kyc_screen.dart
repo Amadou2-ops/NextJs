@@ -182,6 +182,7 @@ class _SmileIdCaptureState extends State<_SmileIdCapture> {
         padding: const EdgeInsets.all(20),
         children: [
           DropdownButtonFormField<String>(
+            isExpanded: true,
             initialValue: _country,
             decoration: const InputDecoration(labelText: 'Pays émetteur de la pièce'),
             items: [for (final corridor in corridors) DropdownMenuItem(value: corridor.country, child: Text(corridor.name))],
@@ -189,6 +190,7 @@ class _SmileIdCaptureState extends State<_SmileIdCapture> {
           ),
           if (launch.jobType == 1) ...[
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: _idType,
               decoration: const InputDecoration(labelText: 'Type de pièce'),
               items: [for (final entry in _idTypes.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],

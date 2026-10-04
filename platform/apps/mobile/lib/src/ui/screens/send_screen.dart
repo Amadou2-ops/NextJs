@@ -177,6 +177,7 @@ class _SendScreenState extends State<SendScreen> {
           children: [
             if (_error != null) ErrorBanner(_error!),
             DropdownButtonFormField<Corridor>(
+              isExpanded: true,
               initialValue: _corridor,
               decoration: const InputDecoration(labelText: 'Pays de destination'),
               items: [for (final corridor in corridors) DropdownMenuItem(value: corridor, child: Text('${corridor.name} (${corridor.currency})'))],
@@ -239,6 +240,7 @@ class _SendScreenState extends State<SendScreen> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<FundingMethod>(
+              isExpanded: true,
               initialValue: _funding,
               decoration: const InputDecoration(labelText: 'Moyen de paiement'),
               items: [for (final method in _fundingMethods) DropdownMenuItem(value: method, child: Text(fundingLabel(method)))],
@@ -271,6 +273,7 @@ class _SendScreenState extends State<SendScreen> {
               TextButton.icon(onPressed: _busy ? null : _addRecipient, icon: const Icon(Icons.person_add), label: const Text('Nouveau bénéficiaire')),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: _purpose,
                 decoration: const InputDecoration(labelText: 'Motif du transfert'),
                 items: [for (final entry in purposes.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],

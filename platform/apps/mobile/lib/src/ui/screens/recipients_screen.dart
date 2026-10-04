@@ -161,6 +161,7 @@ class _RecipientFormScreenState extends State<RecipientFormScreen> {
               TextFormField(controller: _lastName, decoration: InputDecoration(labelText: 'Nom', errorText: _fieldErrors['lastName']), validator: (value) => _required(value, 'Nom requis')),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: _relationship,
                 decoration: const InputDecoration(labelText: 'Lien avec vous'),
                 items: [for (final entry in relationships.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],
@@ -177,6 +178,7 @@ class _RecipientFormScreenState extends State<RecipientFormScreen> {
               if (method == PayoutMethod.mobileMoney) ...[
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _operator,
                   decoration: const InputDecoration(labelText: 'Opérateur'),
                   items: [for (final entry in mobileOperators.entries) DropdownMenuItem(value: entry.key, child: Text(entry.value))],

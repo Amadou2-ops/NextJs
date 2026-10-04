@@ -1,3 +1,5 @@
+import { X509Certificate } from "node:crypto";
+
 import type { Router } from "express";
 import type { Logger } from "pino";
 
@@ -67,7 +69,12 @@ export function createAuthModule(params: {
     new CompositeAttestationVerifier(
       auth.appAttest === undefined
         ? undefined
-        : new AppAttestVerifier({ appIds: auth.appAttest.appIds, allowDevelopment: auth.appAttest.allowDevelopment, rootCertificate: loadAppleAppAttestationRoot() }),
+        : new AppAttestVerifier({
+            appIds: auth.appAttest.appIds,
+            allowDevelopment: auth.appAttest.allowDevelopment,
+            // Racine de test : acceptée par la configuration en développement et tests seulement.
+            rootCertificate: auth.appAttest.testRootCertificatePem === undefined ? loadAppleAppAttestationRoot() : new X509Certificate(auth.appAttest.testRootCertificatePem),
+          }),
       auth.playIntegrity === undefined
         ? undefined
         : new PlayIntegrityVerifier({

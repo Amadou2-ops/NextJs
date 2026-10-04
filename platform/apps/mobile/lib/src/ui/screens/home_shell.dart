@@ -73,6 +73,8 @@ class _Dashboard extends StatelessWidget {
               ),
             const SectionTitle('Portefeuilles'),
             if (data.wallets.isEmpty) const Text('Aucun portefeuille ouvert.'),
+            if (walletCurrencies.any((currency) => data.wallets.every((wallet) => wallet.currency != currency)))
+              _OpenWallet(opened: {for (final wallet in data.wallets) wallet.currency}, onOpened: reload),
             for (final wallet in data.wallets)
               Card(
                 child: ListTile(
@@ -90,4 +92,59 @@ class _Dashboard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Ouverture d'un portefeuille dans une devise d'envoi (requête signée par l'appareil).
+class _OpenWallet extends StatefulWidget {
+  const _OpenWallet({required this.opened, required this.onOpened});
+
+  final Set<String> opened;
+  final Future<void> Function() onOpened;
+
+  @override
+  State<_OpenWallet> createState() => _OpenWalletState();
+}
+
+class _OpenWalletState extends State<_OpenWallet> {
+  late final List<String> _choices = [for (final currency in walletCurrencies) if (!widget.opened.contains(currency)) currency];
+  late String _currency = _choices.first;
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _open() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.services.wallet.open(_currency);
+      await widget.onOpened();
+    } catch (error) {
+      if (mounted) setState(() => _error = describeError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error != null) ErrorBanner(_error!),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _currency,
+                decoration: const InputDecoration(labelText: 'Devise du portefeuille'),
+                items: [for (final currency in _choices) DropdownMenuItem(value: currency, child: Text(currency))],
+                onChanged: _busy ? null : (value) => setState(() => _currency = value ?? _currency),
+              ),
+              const SizedBox(height: 8),
+              BusyButton(label: 'Ouvrir un portefeuille', busy: _busy, onPressed: _open),
+            ],
+          ),
+        ),
+      );
 }

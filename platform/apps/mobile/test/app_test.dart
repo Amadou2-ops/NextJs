@@ -85,4 +85,74 @@ void main() {
     expect(find.text('Portefeuilles'), findsNothing);
     expect(authenticator.reasons, contains('Déverrouillez TransfertPlus'));
   });
+
+  testWidgets("ouverture d'un portefeuille : requête signée par la clé de l'appareil, accueil actualisé", (tester) async {
+    final store = MemoryStore();
+    final keys = FakeKeyStore()..key = FakeKeyStore.spki;
+    store.values
+      ..[StoreKeys.deviceId] = '11111111-2222-4333-8444-555555555555'
+      ..[StoreKeys.refreshToken] = 'rt_initial';
+    final wallets = <Map<String, Object?>>[];
+    final opened = <http.Request>[];
+    final client = MockClient((request) async {
+      switch ('${request.method} ${request.url.path}') {
+        case 'POST /v1/auth/token/refresh':
+          return http.Response(
+            jsonEncode({
+              'status': 'authenticated',
+              'userId': '6f0d2a4e-7c1b-4d8e-9a3f-2b5c8e1d7a90',
+              'sessionId': '0b7a7c5e-3d21-4c8f-9a51-1f2e3d4c5b6a',
+              'deviceId': '11111111-2222-4333-8444-555555555555',
+              'accessToken': 'acces',
+              'accessTokenExpiresAt': DateTime.now().add(const Duration(minutes: 10)).toUtc().toIso8601String(),
+              'refreshToken': 'rt_suivant',
+              'refreshTokenExpiresAt': DateTime.now().add(const Duration(days: 30)).toUtc().toIso8601String(),
+            }),
+            200,
+          );
+        case 'GET /v1/wallets':
+          return http.Response(jsonEncode({'wallets': wallets}), 200);
+        case 'POST /v1/wallets':
+          opened.add(request);
+          final wallet = {
+            'currency': (jsonDecode(request.body) as Map<String, Object?>)['currency'],
+            'available': {'amount': '0', 'currency': 'EUR'},
+            'held': {'amount': '0', 'currency': 'EUR'},
+          };
+          wallets.add(wallet);
+          return http.Response(jsonEncode(wallet), 201);
+        case 'GET /v1/kyc':
+          return http.Response(
+            jsonEncode({
+              'tier': 'tier_2',
+              'limits': {'singleTransferMax': {'amount': '300000', 'currency': 'EUR'}, 'monthlyMax': {'amount': '1000000', 'currency': 'EUR'}},
+              'nextTier': null,
+              'attemptsRemaining': 3,
+              'activeVerification': null,
+            }),
+            200,
+          );
+        case 'GET /v1/transfers':
+          return http.Response(jsonEncode({'transfers': <Object?>[], 'nextCursor': null}), 200);
+      }
+      return http.Response(jsonEncode({'code': 'NOT_FOUND'}), 404);
+    });
+    final services = _services(store: store, keys: keys, authenticator: FakeAuthenticator(), client: client);
+    await tester.pumpWidget(TransfertPlusApp(services: services));
+    await services.session.restore();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Aucun portefeuille ouvert.'), findsOneWidget);
+    await tester.tap(find.text('Ouvrir un portefeuille'));
+    await tester.pumpAndSettle();
+
+    expect(opened, hasLength(1));
+    expect(jsonDecode(opened.single.body), {'currency': 'EUR'});
+    expect(opened.single.headers['X-Device-Id'], '11111111-2222-4333-8444-555555555555');
+    expect(opened.single.headers['X-Device-Signature'], isNotEmpty);
+    expect(keys.signed, isNotEmpty);
+    expect(find.text('Aucun portefeuille ouvert.'), findsNothing);
+    // L'EUR est ouvert : seules les autres devises restent proposées.
+    expect(find.widgetWithText(DropdownButtonFormField<String>, 'GBP'), findsOneWidget);
+  });
 }

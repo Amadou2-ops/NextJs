@@ -101,6 +101,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             DropdownButtonFormField<SendingCountry>(
+              isExpanded: true,
               initialValue: _country,
               decoration: const InputDecoration(labelText: 'Pays de résidence'),
               items: [for (final country in sendingCountries) DropdownMenuItem(value: country, child: Text(country.name))],

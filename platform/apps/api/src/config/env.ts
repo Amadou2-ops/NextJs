@@ -187,6 +187,9 @@ const rawEnvironmentSchema = z.object({
   // Attestation iOS (App Attest) : identifiants « TEAMID.bundle.id ».
   APPLE_APP_ATTEST_APP_IDS: csv.pipe(z.array(z.string().regex(/^[A-Z0-9]{10}\.[A-Za-z0-9.-]+$/)).max(5)).optional(),
   APPLE_APP_ATTEST_ALLOW_DEVELOPMENT: z.enum(["true", "false"]).default("false"),
+  // Autorité racine de TEST remplaçant la racine Apple (tests de bout en bout
+  // de l'application mobile) : refusée hors développement et tests.
+  APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH: z.string().min(1).optional(),
 
   // Attestation Android (Play Integrity).
   ANDROID_PACKAGE_NAME: z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/).optional(),
@@ -325,7 +328,7 @@ export interface AppConfig {
           readonly messagingServiceSid: string;
         };
     readonly webauthn: { readonly rpId: string; readonly rpName: string; readonly origins: readonly string[] };
-    readonly appAttest: { readonly appIds: readonly string[]; readonly allowDevelopment: boolean } | undefined;
+    readonly appAttest: { readonly appIds: readonly string[]; readonly allowDevelopment: boolean; readonly testRootCertificatePem?: string } | undefined;
     readonly playIntegrity:
       | {
           readonly packageName: string;
@@ -449,6 +452,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const customerKids = new Set(raw.JWT_CUSTOMER_PUBLIC_JWKS.keys.map((key) => key.kid));
   for (const key of raw.JWT_ADMIN_PUBLIC_JWKS.keys) {
     if (customerKids.has(key.kid)) problems.push(`la clé ${key.kid} est partagée entre clients et personnel`);
+  }
+
+  if (raw.APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH !== undefined) {
+    if (raw.APP_ENV !== "development" && raw.APP_ENV !== "test") {
+      problems.push("APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH (autorité App Attest de test) interdit hors développement et tests");
+    }
+    if (raw.APPLE_APP_ATTEST_APP_IDS === undefined || raw.APPLE_APP_ATTEST_APP_IDS.length === 0) {
+      problems.push("APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH exige APPLE_APP_ATTEST_APP_IDS");
+    }
   }
 
   if (strict) {
@@ -653,7 +665,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       appAttest:
         raw.APPLE_APP_ATTEST_APP_IDS === undefined || raw.APPLE_APP_ATTEST_APP_IDS.length === 0
           ? undefined
-          : { appIds: raw.APPLE_APP_ATTEST_APP_IDS, allowDevelopment: raw.APPLE_APP_ATTEST_ALLOW_DEVELOPMENT === "true" },
+          : {
+              appIds: raw.APPLE_APP_ATTEST_APP_IDS,
+              allowDevelopment: raw.APPLE_APP_ATTEST_ALLOW_DEVELOPMENT === "true",
+              ...(raw.APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH === undefined ? {} : { testRootCertificatePem: readFileSync(raw.APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH, "utf8") }),
+            },
       playIntegrity:
         raw.ANDROID_PACKAGE_NAME === undefined || raw.ANDROID_SIGNING_CERT_SHA256 === undefined || raw.GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT === undefined
           ? undefined

@@ -1,8 +1,12 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { ConfigurationError, loadConfig } from "../src/config/env.js";
+import { APPLE_APP_ATTESTATION_ROOT_CA_PEM } from "../src/modules/auth/attestation/appleRootCa.js";
 import { createTestKeys } from "./support/fixtures.js";
 
 const keys = await createTestKeys();
@@ -158,5 +162,28 @@ describe("configuration", () => {
       }),
     );
     expect(config.database.ssl).toBe(false);
+  });
+
+  it("n'accepte une autorité App Attest de test qu'en développement et en tests", () => {
+    const pem = new X509Certificate(APPLE_APP_ATTESTATION_ROOT_CA_PEM).toString();
+    const path = join(mkdtempSync(join(tmpdir(), "attest-")), "racine.pem");
+    writeFileSync(path, pem);
+    const development = {
+      APP_ENV: "development",
+      DATABASE_SSL_MODE: "disable",
+      REDIS_URL: "redis://127.0.0.1:6379",
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000",
+      JWT_ISSUER: "http://localhost:8080",
+      SMS_PROVIDER: "log",
+      WEBAUTHN_RP_ID: "localhost",
+      WEBAUTHN_ORIGINS: "http://localhost:3000",
+      APPLE_APP_ATTEST_APP_IDS: "EQUIPE1234.com.transfertplus.app",
+      APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH: path,
+    };
+    expect(loadConfig(baseEnv(development)).auth.appAttest?.testRootCertificatePem).toBe(pem);
+    expect(() => loadConfig(baseEnv({ ...development, APPLE_APP_ATTEST_APP_IDS: "" }))).toThrow(/APPLE_APP_ATTEST_APP_IDS/);
+    expect(() => loadConfig(baseEnv({ APPLE_APP_ATTEST_APP_IDS: "EQUIPE1234.com.transfertplus.app", APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH: path }))).toThrow(/interdit hors développement/);
+    expect(() => loadConfig(baseEnv({ APP_ENV: "staging", APPLE_APP_ATTEST_APP_IDS: "EQUIPE1234.com.transfertplus.app", APPLE_APP_ATTEST_TEST_ROOT_CERT_PATH: path }))).toThrow(/interdit hors développement/);
+    expect(loadConfig(baseEnv({ APPLE_APP_ATTEST_APP_IDS: "EQUIPE1234.com.transfertplus.app" })).auth.appAttest?.testRootCertificatePem).toBeUndefined();
   });
 });
