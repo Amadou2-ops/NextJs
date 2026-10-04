@@ -173,6 +173,13 @@ class SessionManager extends ChangeNotifier implements SessionCredentials {
   /// Appareil inconnu de l'API (révoqué) : oubli local avant réenregistrement.
   Future<void> deviceRejected() => _forgetDevice();
 
+  /// Compte clôturé par son titulaire : l'API a révoqué sessions et appareil ;
+  /// secrets locaux et clé de l'appareil sont effacés.
+  Future<void> accountClosed() async {
+    await _forgetDevice();
+    await _setSignedOut();
+  }
+
   Future<void> signOut() async {
     if (_status == SessionStatus.signedIn) {
       try {

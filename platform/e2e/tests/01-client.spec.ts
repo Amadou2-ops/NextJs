@@ -7,7 +7,8 @@ import { addVirtualAuthenticator, collectBrowserErrors, freshTotp, frenchMobileN
 
 /**
  * Site client : inscription par SMS, session chiffrée, second facteur TOTP,
- * passkey, reconnexions, mot de passe oublié, protections du BFF. Un même client, du premier
+ * passkey, reconnexions, mot de passe oublié, protections du BFF, clôture
+ * du compte. Un même client, du premier
  * écran à la connexion sans mot de passe.
  */
 test.describe.configure({ mode: "serial" });
@@ -153,6 +154,27 @@ test("mutation d'une autre origine refusée par le BFF", async () => {
   const { webUrl } = e2eContext();
   const forged = await page.request.post(`${webUrl}/securite`, { headers: { origin: "https://attaquant.example" }, data: "x" });
   expect(forged.status()).toBe(403);
+});
+
+test("clôture du compte : mot de passe et confirmation, accès fermé définitivement", async () => {
+  const { webUrl } = e2eContext();
+  await page.goto(`${webUrl}/securite`);
+  const panel = page.locator("section", { has: page.getByRole("heading", { name: "Clôturer mon compte" }) });
+  await panel.getByLabel("Mot de passe").fill(newPassword);
+  await panel.getByRole("button", { name: "Clôturer définitivement mon compte" }).click();
+  await expect(panel.getByText("Cochez la case pour confirmer la clôture")).toBeVisible();
+  await panel.getByLabel("Mot de passe").fill(newPassword);
+  await panel.getByLabel("Je comprends que la clôture de mon compte est définitive.").check();
+  await panel.getByRole("button", { name: "Clôturer définitivement mon compte" }).click();
+  await page.waitForURL("**/compte-cloture");
+  await expect(page.getByRole("heading", { name: "Votre compte est clôturé" })).toBeVisible();
+  expect((await context.cookies()).some((cookie) => cookie.name === "__Host-tp_session")).toBe(false);
+
+  await page.goto(`${webUrl}/connexion`);
+  await page.getByLabel("Numéro de téléphone").fill(phone);
+  await page.getByLabel("Mot de passe").fill(newPassword);
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await expect(page.getByText("Ce compte est suspendu ou clôturé. Contactez le service client.")).toBeVisible();
 });
 
 test("aucune erreur JavaScript ni violation de la CSP", () => {

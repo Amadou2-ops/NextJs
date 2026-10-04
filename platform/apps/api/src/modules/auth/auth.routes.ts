@@ -11,6 +11,7 @@ import { requireDeviceSignature } from "../../middlewares/requireDeviceSignature
 import { validate } from "../../middlewares/validate.js";
 import type { AuthController } from "./auth.controller.js";
 import {
+  accountClosureSchema,
   deviceIdParamsSchema,
   loginCompleteSchema,
   loginStartSchema,
@@ -90,6 +91,7 @@ export function authRoutes(deps: AuthRouterDependencies): Router {
   router.get("/v1/auth/sessions", customer, handle(c.listSessions));
   router.delete("/v1/auth/sessions/:sessionId", customer, deviceSigned, aal2, validate({ params: sessionIdParamsSchema }), handle(c.revokeSession));
   router.post("/v1/auth/sessions/revoke-others", customer, deviceSigned, aal2, handle(c.revokeOtherSessions));
+  router.post("/v1/auth/account/close", customer, deviceSigned, aal2, validate({ body: accountClosureSchema }), handle(c.closeAccount));
   router.get("/v1/auth/devices", customer, handle(c.listDevices));
   router.delete("/v1/auth/devices/:deviceId", customer, deviceSigned, aal2, validate({ params: deviceIdParamsSchema }), handle(c.revokeDevice));
   router.post("/v1/auth/mfa/totp/setup", customer, deviceSigned, aal2, handle(c.startTotpEnrollment));

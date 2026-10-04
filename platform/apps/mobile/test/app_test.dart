@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -201,5 +203,76 @@ void main() {
     expect(find.text('Aucun portefeuille ouvert.'), findsNothing);
     // L'EUR est ouvert : seules les autres devises restent proposées.
     expect(find.widgetWithText(DropdownButtonFormField<String>, 'GBP'), findsOneWidget);
+  });
+
+  testWidgets('clôture du compte : confirmation explicite et biométrique, appareil oublié, retour à l\'accueil public', (tester) async {
+    final store = MemoryStore();
+    final keys = FakeKeyStore()..key = FakeKeyStore.spki;
+    store.values
+      ..[StoreKeys.deviceId] = '11111111-2222-4333-8444-555555555555'
+      ..[StoreKeys.refreshToken] = 'rt_initial';
+    final closures = <http.Request>[];
+    final authenticator = FakeAuthenticator();
+    final client = MockClient((request) async {
+      switch ('${request.method} ${request.url.path}') {
+        case 'POST /v1/auth/token/refresh':
+          return http.Response(
+            jsonEncode({
+              'status': 'authenticated',
+              'userId': '6f0d2a4e-7c1b-4d8e-9a3f-2b5c8e1d7a90',
+              'sessionId': '0b7a7c5e-3d21-4c8f-9a51-1f2e3d4c5b6a',
+              'deviceId': '11111111-2222-4333-8444-555555555555',
+              'accessToken': 'acces',
+              'accessTokenExpiresAt': DateTime.now().add(const Duration(minutes: 10)).toUtc().toIso8601String(),
+              'refreshToken': 'rt_suivant',
+              'refreshTokenExpiresAt': DateTime.now().add(const Duration(days: 30)).toUtc().toIso8601String(),
+            }),
+            200,
+          );
+        case 'POST /v1/auth/account/close':
+          closures.add(request);
+          if (closures.length == 1) {
+            return http.Response(
+              jsonEncode({'code': 'ACCOUNT_CLOSURE_BLOCKED', 'title': 'Clôture impossible', 'detail': 'Votre compte présente encore un solde. Videz vos portefeuilles avant de le clôturer.'}),
+              409,
+              headers: {'content-type': 'application/problem+json; charset=utf-8'},
+            );
+          }
+          return http.Response('', 204);
+      }
+      return http.Response(jsonEncode({'code': 'NOT_FOUND'}), 404);
+    });
+    final services = _services(store: store, keys: keys, authenticator: authenticator, client: client);
+    await tester.pumpWidget(TransfertPlusApp(services: services));
+    await services.session.restore();
+    await tester.pumpAndSettle();
+    unawaited(GoRouter.of(tester.element(find.byType(Scaffold).first)).push('/cloture'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Mot de passe'), 'Teranga-Dakar-2026!');
+    await tester.tap(find.text('Clôturer définitivement mon compte'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cochez la case pour confirmer la clôture.'), findsOneWidget);
+    expect(closures, isEmpty);
+
+    await tester.tap(find.text('Je comprends que la clôture de mon compte est définitive.'));
+    await tester.enterText(find.widgetWithText(TextFormField, 'Mot de passe'), 'Teranga-Dakar-2026!');
+    await tester.tap(find.text('Clôturer définitivement mon compte'));
+    await tester.pumpAndSettle();
+    expect(find.text('Votre compte présente encore un solde. Videz vos portefeuilles avant de le clôturer.'), findsOneWidget);
+    expect(services.session.status, SessionStatus.signedIn);
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Mot de passe'), 'Teranga-Dakar-2026!');
+    await tester.tap(find.text('Clôturer définitivement mon compte'));
+    await tester.pumpAndSettle();
+    expect(closures, hasLength(2));
+    expect(jsonDecode(closures.last.body), {'password': 'Teranga-Dakar-2026!'});
+    expect(closures.last.headers['X-Device-Signature'], isNotEmpty);
+    expect(authenticator.reasons.where((reason) => reason == 'Confirmez la clôture de votre compte'), hasLength(2));
+    expect(services.session.status, SessionStatus.signedOut);
+    expect(store.values[StoreKeys.deviceId], isNull);
+    expect(store.values[StoreKeys.refreshToken], isNull);
+    expect(keys.key, isNull);
+    expect(find.text('Créer un compte'), findsOneWidget);
   });
 }

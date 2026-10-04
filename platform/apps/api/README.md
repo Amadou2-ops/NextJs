@@ -46,6 +46,7 @@ cryptographiquement PUIS confronté à sa session en base (révocation immédiat
 | Passkey (web) | WebAuthn avec vérification de l'utilisateur | session niveau 2 |
 | Renouvellement | jeton opaque à usage unique (+ signature d'appareil sur mobile) | rotation ; réutilisation = révocation de la session |
 | Mot de passe oublié | code SMS + TOTP si activé (une carte SIM détournée ne suffit pas) | mot de passe remplacé, verrouillage levé, **toutes** les sessions fermées, avis SMS au titulaire |
+| Clôture du compte (`POST /v1/auth/account/close`) | session niveau 2 + signature d'appareil (mobile) + mot de passe ressaisi | refusée tant qu'un solde est non nul ou qu'un transfert est en cours (`ACCOUNT_CLOSURE_BLOCKED`) ; comptes du registre clôturés, sessions, appareils et passkeys révoqués ; définitive ; données conservées pour la durée légale |
 
 Mot de passe oublié (`/v1/auth/password-reset/start|complete`) : réponse
 identique qu'un compte actif corresponde ou non au numéro (aucun SMS sinon,

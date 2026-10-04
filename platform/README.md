@@ -33,6 +33,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 19 | Parcours de bout en bout de l'application mobile : l'app Flutter réelle contre la pile réelle (inscription avec attestation App Attest, portefeuille, envoi, reprise de session signée), autorité d'attestation de test acceptée en développement seulement ; ouverture d'un portefeuille depuis l'app (manquante), actualisation des écrans et menus déroulants corrigés ; job CI | ✅ |
 | 20 | Consommateur de l'outbox (tâche `outbox-dispatch`) : journal d'exploitation par gravité, SMS aux clients pour l'issue de leurs transferts et de leur vérification d'identité (une seule fois, jamais pour un événement de conformité : garanti par la base, migration 0027), reprises croissantes et abandon signalé ; alertes d'anomalies de paiement et de SMS bloqués (règles testées) ; E2E : SMS de remboursement vérifié | ✅ |
 | 21 | Mot de passe oublié (API, site, application mobile) : code SMS, application d'authentification exigée si activée, réponse identique pour un numéro inconnu, toutes les sessions fermées, avis de sécurité par SMS (migration 0028) ; E2E du site | ✅ |
+| 22 | Clôture du compte par le client (site et application mobile, exigée par les magasins d'applications) : mot de passe ressaisi, session renforcée, signature d'appareil ; refusée tant qu'un solde est non nul ou qu'un transfert est en cours ; tous les accès révoqués, clôture définitive garantie par la base, données conservées pour la durée légale (migration 0029) ; E2E du site | ✅ |
 
 ## Démarrage local
 

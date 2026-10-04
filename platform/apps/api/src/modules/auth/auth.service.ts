@@ -10,7 +10,7 @@ import type { BlindIndexer } from "../../lib/crypto/blindIndex.js";
 import { NormalizationError, normalizePhone } from "../../lib/crypto/blindIndex.js";
 import type { FieldEncryptor } from "../../lib/crypto/fieldEncryption.js";
 import { fieldContext } from "../../lib/crypto/fieldEncryption.js";
-import { AppError, ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError, ValidationError } from "../../lib/errors.js";
+import { AppError, ConflictError, NotFoundError, ServiceUnavailableError, ValidationError } from "../../lib/errors.js";
 import { SmsDeliveryError } from "../../lib/sms/smsSender.js";
 import * as repository from "./auth.repository.js";
 import type { CustomerAudience, RefreshTokenRow } from "./auth.repository.js";
@@ -130,6 +130,13 @@ function accountLocked(lockedUntil: Date): AppError {
   return new AppError("ACCOUNT_LOCKED", 423, "Compte temporairement verrouillé", {
     detail: "Trop de tentatives. Réessayez plus tard ou réinitialisez votre mot de passe.",
     retryAfterSeconds: Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 1000)),
+  });
+}
+
+function accountDisabled(status: string): AppError {
+  return new AppError("ACCOUNT_DISABLED", 403, "Compte inaccessible", {
+    detail: "Ce compte est suspendu ou clôturé. Contactez le service client.",
+    internalContext: { reason: `user_${status}` },
   });
 }
 
@@ -447,7 +454,7 @@ export class AuthService {
 
     if (outcome.kind === "invalid_code") throw invalidCode(outcome.reason);
     if (outcome.kind === "inactive") {
-      throw new ForbiddenError("Ce compte est suspendu ou clôturé. Contactez le service client.", { reason: `user_${outcome.status}` });
+      throw accountDisabled(outcome.status);
     }
     if (outcome.kind === "totp_required") throw totpRequired();
   }
@@ -496,7 +503,7 @@ export class AuthService {
       throw invalidCredentials();
     }
     if (user.status === "suspended" || user.status === "closed") {
-      throw new ForbiddenError("Ce compte est suspendu ou clôturé. Contactez le service client.", { reason: `user_${user.status}` });
+      throw accountDisabled(user.status);
     }
     if (this.deps.passwords.needsRehash(user.password_hash)) {
       await repository.updatePasswordHash(this.deps.pool, user.id, await this.deps.passwords.hash(params.password));
@@ -793,6 +800,57 @@ export class AuthService {
         metadata: { count },
       });
       return count;
+    });
+  }
+
+  /**
+   * Clôture du compte par son titulaire (session renforcée, appareil signé,
+   * mot de passe ressaisi). La base refuse tant qu'un solde est non nul ou
+   * qu'un transfert est en cours, puis révoque tous les accès ; les données
+   * sont conservées pour la durée légale.
+   */
+  async closeAccount(userId: string, password: string, context: RequestContext): Promise<void> {
+    const user = await this.deps.pool.query<{ password_hash: string }>("SELECT password_hash FROM identity.users WHERE id = $1", [userId]);
+    const passwordHash = user.rows[0]?.password_hash;
+    if (passwordHash === undefined) throw new NotFoundError("Compte introuvable.");
+    if (!(await this.deps.passwords.verify(passwordHash, password))) {
+      const lock = await withTransaction(this.deps.pool, { actor: { type: "customer", id: userId } }, async (tx) => {
+        const result = await repository.recordFailedLogin(tx, userId);
+        await repository.recordAudit(tx, {
+          actorType: "customer",
+          actorId: userId,
+          action: "auth.account_closure_failed",
+          targetType: "user",
+          targetId: userId,
+          ipAddress: context.ipAddress,
+          userAgent: context.userAgent,
+          requestId: context.requestId,
+          metadata: { reason: "bad_password" },
+        });
+        return result;
+      });
+      if (lock.lockedUntil !== null && lock.lockedUntil.getTime() > Date.now()) throw accountLocked(lock.lockedUntil);
+      throw new AppError("INVALID_CREDENTIALS", 403, "Mot de passe incorrect", { detail: "Le mot de passe saisi est incorrect." });
+    }
+    await withTransaction(this.deps.pool, { actor: { type: "customer", id: userId }, changeNote: "clôture du compte par le client" }, async (tx) => {
+      const closed = await tx.query<{ revoked: number }>("SELECT identity.close_customer_account($1) AS revoked", [userId]);
+      const revokedSessions = closed.rows[0]?.revoked ?? 0;
+      await repository.recordAudit(tx, {
+        actorType: "customer",
+        actorId: userId,
+        action: "auth.account_closed",
+        targetType: "user",
+        targetId: userId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+        requestId: context.requestId,
+        metadata: { revokedSessions },
+      });
+      await tx.query(
+        `INSERT INTO integrations.outbox (aggregate_type, aggregate_id, event_type, payload, dedup_key)
+         VALUES ('user', $1, 'customers.closed', $2::jsonb, $3)`,
+        [userId, JSON.stringify({ user_id: userId, revoked_sessions: revokedSessions }), `customer-closed:${userId}`],
+      );
     });
   }
 

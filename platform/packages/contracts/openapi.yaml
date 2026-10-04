@@ -383,6 +383,37 @@ paths:
                 required: [revoked]
                 properties:
                   revoked: { type: integer, minimum: 0 }
+  /auth/account/close:
+    post:
+      tags: [auth]
+      operationId: closeAccount
+      summary: Clôture définitive du compte par son titulaire (soldes nuls, aucun transfert en cours)
+      description: |
+        Session de niveau 2, requête signée par l'appareil sur mobile, mot de
+        passe ressaisi. Tous les accès sont révoqués ; les données sont
+        conservées pour la durée légale (LCB-FT). `409 ACCOUNT_CLOSURE_BLOCKED`
+        tant qu'un solde est non nul ou qu'un transfert est en cours.
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+        - $ref: "#/components/parameters/DeviceSignature"
+        - $ref: "#/components/parameters/DeviceSignatureTimestamp"
+        - $ref: "#/components/parameters/DeviceCounter"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password]
+              properties:
+                password: { type: string, maxLength: 128 }
+      responses:
+        "204": { description: Compte clôturé, accès révoqués }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
   /auth/devices:
     get:
       tags: [auth]
@@ -2499,6 +2530,8 @@ components:
         - VERIFICATION_EXPIRED
         - ACCOUNT_LOCKED
         - TOTP_REQUIRED
+        - ACCOUNT_CLOSURE_BLOCKED
+        - ACCOUNT_DISABLED
         - DEVICE_ATTESTATION_FAILED
         - DEVICE_SIGNATURE_INVALID
         - VALIDATION_FAILED

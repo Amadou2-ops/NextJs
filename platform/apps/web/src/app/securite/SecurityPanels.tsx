@@ -2,12 +2,15 @@
 
 import { startRegistration } from "@simplewebauthn/browser";
 import QRCode from "qrcode";
-import { useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 
+import { FieldError, FormMessage } from "@/components/FormStatus";
 import { formatDateTime } from "@/lib/format";
 import type { SessionSummary } from "@/lib/types";
+import type { ActionState } from "@/server/actionState";
 
 import {
+  closeAccountAction,
   confirmTotpAction,
   disableTotpAction,
   passkeyRegistrationOptionsAction,
@@ -212,6 +215,35 @@ export function PasskeyPanel(): React.ReactNode {
       >
         Ajouter une passkey
       </button>
+    </section>
+  );
+}
+
+export function ClosurePanel(): React.ReactNode {
+  const [state, action, pending] = useActionState<ActionState, FormData>(closeAccountAction, { status: "idle" });
+  const fields = state.status === "error" ? state.fields : undefined;
+  return (
+    <section className="card stack">
+      <h2>Clôturer mon compte</h2>
+      <p className="muted">
+        La clôture est définitive : vos sessions, appareils et passkeys sont révoqués. Vos portefeuilles doivent être vides et aucun transfert ne doit être en cours. Vos données sont conservées pour la durée imposée par la réglementation, puis supprimées.
+      </p>
+      <form action={action} className="stack" noValidate>
+        <FormMessage state={state} />
+        <label>
+          Mot de passe
+          <input name="password" type="password" autoComplete="current-password" required aria-invalid={fields?.["password"] !== undefined} aria-describedby="password-erreur" />
+          <FieldError fields={fields} name="password" />
+        </label>
+        <label style={{ flexDirection: "row", alignItems: "flex-start", fontWeight: 400 }}>
+          <input type="checkbox" name="confirmation" value="oui" required />
+          <span>Je comprends que la clôture de mon compte est définitive.</span>
+        </label>
+        <FieldError fields={fields} name="confirmation" />
+        <button type="submit" className="danger" disabled={pending}>
+          {pending ? "Clôture…" : "Clôturer définitivement mon compte"}
+        </button>
+      </form>
     </section>
   );
 }

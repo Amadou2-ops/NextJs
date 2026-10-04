@@ -171,4 +171,5 @@ Le contrôle demande un jeton réel et le vérifie entièrement.
 - [ ] `checkProviders.js --strict` exécuté sur la production. Les points à vérifier à la main sont validés.
 - [ ] Compte Thunes préfinancé ; soldes Flutterwave suffisants pour les paiements sortants.
 - [ ] Application publiée sur la piste interne Google Play et sur TestFlight (`apps/mobile/README.md`, section Publication). Les versions publiées visent l'API de production et refusent les environnements de test des prestataires. Vérifier l'attestation sur un appareil réel par plateforme avant d'ouvrir au public.
+- [ ] Fiches des magasins : déclarer la suppression du compte depuis l'application (Profil → *Clôturer mon compte* ; App Store, règle 5.1.1(v) ; Google Play, *Sécurité des données* → suppression du compte, avec l'URL web `https://<site>/securite`). Préciser que les données sont conservées pour la durée légale de lutte contre le blanchiment.
 - [ ] Premier transfert réel de faible montant suivi jusqu'à la livraison, puis remboursé si nécessaire.

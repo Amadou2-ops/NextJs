@@ -2,13 +2,16 @@
 
 import type { PublicKeyCredentialCreationOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { z } from "@/lib/zod";
 import type { ActionState } from "@/server/actionState";
-import { failure, fromError } from "@/server/actionState";
-import { actionApi } from "@/server/context";
+import { failure, fromError, parseForm } from "@/server/actionState";
+import { actionApi, clearCookie } from "@/server/context";
+import { PENDING_COOKIE, SESSION_COOKIE } from "@/server/session";
 
-/** Sécurité du compte : sessions, application d'authentification (TOTP), passkeys. */
+/** Sécurité du compte : sessions, application d'authentification (TOTP), passkeys, clôture. */
 
 export async function revokeSessionAction(sessionId: string): Promise<ActionState> {
   if (!z.uuid().safeParse(sessionId).success) return failure("Session introuvable.");
@@ -78,4 +81,24 @@ export async function passkeyRegistrationVerifyAction(challengeId: string, respo
   } catch (error: unknown) {
     return fromError(error);
   }
+}
+
+const closureSchema = z.strictObject({
+  password: z.string().min(1, "Mot de passe requis").max(128),
+  confirmation: z.literal("oui", "Cochez la case pour confirmer la clôture"),
+});
+
+/** Clôture définitive du compte (soldes nuls, aucun transfert en cours) ; la session du navigateur est effacée. */
+export async function closeAccountAction(_previous: ActionState, form: FormData): Promise<ActionState> {
+  const parsed = parseForm(closureSchema, form);
+  if (!parsed.ok) return parsed.state;
+  try {
+    await actionApi({ method: "POST", path: "/v1/auth/account/close", body: { password: parsed.data.password } });
+  } catch (error: unknown) {
+    return fromError(error);
+  }
+  const store = await cookies();
+  clearCookie(store, SESSION_COOKIE);
+  clearCookie(store, PENDING_COOKIE);
+  redirect("/compte-cloture");
 }

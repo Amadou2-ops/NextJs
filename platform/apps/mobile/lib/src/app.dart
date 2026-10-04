@@ -71,6 +71,7 @@ GoRouter buildRouter(AppServices services) {
       ),
       GoRoute(path: '/verification', builder: (context, state) => const KycScreen()),
       GoRoute(path: '/securite', builder: (context, state) => const SecurityScreen()),
+      GoRoute(path: '/cloture', builder: (context, state) => const AccountClosureScreen()),
     ],
   );
 }

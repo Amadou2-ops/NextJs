@@ -63,6 +63,7 @@ export const EVENT_CATALOG: Readonly<Record<string, EventDefinition>> = {
   "aml.list_updated": INFO,
   "backoffice.approval_requested": INFO,
   "customers.password_reset": { severity: "info", notify: "password_changed" },
+  "customers.closed": INFO,
   "customers.suspended": INFO,
   "customers.reactivated": INFO,
 

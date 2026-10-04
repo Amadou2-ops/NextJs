@@ -38,6 +38,7 @@ class ApiException implements Exception {
     'INVALID_VERIFICATION_CODE': 'Code incorrect. Vérifiez-le et réessayez.',
     'VERIFICATION_EXPIRED': 'Ce code a expiré. Recommencez l\'opération.',
     'ACCOUNT_LOCKED': 'Trop de tentatives. Votre compte est temporairement verrouillé. Vous pouvez réinitialiser votre mot de passe.',
+    'ACCOUNT_DISABLED': 'Ce compte est suspendu ou clôturé. Contactez le service client.',
     'TOTP_REQUIRED': "Votre compte est protégé par une application d'authentification : demandez un nouveau code SMS et saisissez aussi le code de l'application.",
     'RATE_LIMITED': 'Trop de tentatives. Patientez quelques minutes avant de réessayer.',
     'VALIDATION_FAILED': 'Certaines informations sont invalides.',

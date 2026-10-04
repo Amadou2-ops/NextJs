@@ -588,6 +588,67 @@ describe("mot de passe oublié", () => {
   });
 });
 
+describe("clôture du compte", () => {
+  it("exige le mot de passe, refuse un solde non nul, puis ferme tous les accès définitivement", async () => {
+    const phone = newSenegalPhone();
+    const registered = await register(phone);
+    const auth = `Bearer ${registered.body.accessToken}`;
+    const userId = registered.body.userId as string;
+
+    const wrong = await request(app).post("/v1/auth/account/close").set("Authorization", auth).send({ password: "pas-le-bon-mot-de-passe" });
+    expect(wrong.status).toBe(403);
+    expect(wrong.body.code).toBe("INVALID_CREDENTIALS");
+
+    // Solde non nul : refus, argent du client jamais laissé sans titulaire.
+    await owner.query(
+      `SELECT ledger.post_journal($1, 'wallet_funding',
+               jsonb_build_array(
+                 jsonb_build_object('account_id', ledger.open_system_account('provider_settlement', 'EUR', 'stripe'), 'direction', 'debit', 'amount', 500, 'currency', 'EUR'),
+                 jsonb_build_object('account_id', ledger.open_customer_account($2, 'customer_wallet', 'EUR'), 'direction', 'credit', 'amount', 500, 'currency', 'EUR')),
+               'Rechargement de test', 'system:tests')`,
+      [`test:closure-funding:${userId}`, userId],
+    );
+    const funded = await request(app).post("/v1/auth/account/close").set("Authorization", auth).send({ password: PASSWORD });
+    expect(funded.status).toBe(409);
+    expect(funded.body).toMatchObject({ code: "ACCOUNT_CLOSURE_BLOCKED", detail: "Votre compte présente encore un solde. Videz vos portefeuilles avant de le clôturer." });
+    await owner.query(
+      `SELECT ledger.post_journal($1, 'adjustment',
+               jsonb_build_array(
+                 jsonb_build_object('account_id', ledger.open_customer_account($2, 'customer_wallet', 'EUR'), 'direction', 'debit', 'amount', 500, 'currency', 'EUR'),
+                 jsonb_build_object('account_id', ledger.open_system_account('provider_settlement', 'EUR', 'stripe'), 'direction', 'credit', 'amount', 500, 'currency', 'EUR')),
+               'Remboursement du solde (test)', 'system:tests')`,
+      [`test:closure-payout:${userId}`, userId],
+    );
+
+    expect((await request(app).post("/v1/auth/account/close").set("Authorization", auth).send({ password: PASSWORD })).status).toBe(204);
+    expect((await request(app).get("/v1/auth/sessions").set("Authorization", auth)).status).toBe(401);
+    const login = await request(app).post("/v1/auth/login").send({ phone, password: PASSWORD, client: { type: "web" } });
+    expect(login.status).toBe(403);
+    const before = sms.messages.length;
+    expect((await request(app).post("/v1/auth/password-reset/start").send({ phone, locale: "fr" })).status).toBe(202);
+    expect(sms.messages.length).toBe(before);
+
+    const state = await owner.query<{ status: string; open_accounts: string }>(
+      `SELECT u.status::text, (SELECT count(*) FROM ledger.accounts a WHERE a.owner_user_id = u.id AND a.status <> 'closed')::text AS open_accounts
+         FROM identity.users u WHERE u.id = $1`,
+      [userId],
+    );
+    expect(state.rows).toEqual([{ status: "closed", open_accounts: "0" }]);
+    const audit = await owner.query("SELECT 1 FROM audit.events WHERE action = 'auth.account_closed' AND target_id = $1", [userId]);
+    expect(audit.rowCount).toBe(1);
+    const outbox = await owner.query("SELECT 1 FROM integrations.outbox WHERE event_type = 'customers.closed' AND aggregate_id = $1", [userId]);
+    expect(outbox.rowCount).toBe(1);
+  });
+
+  it("refuse une session de niveau 1", async () => {
+    const phone = newSenegalPhone();
+    const registered = await register(phone);
+    await owner.query("UPDATE identity.sessions SET assurance_level = 1, mfa_verified_at = NULL WHERE id = $1", [registered.body.sessionId]);
+    const response = await request(app).post("/v1/auth/account/close").set("Authorization", `Bearer ${registered.body.accessToken}`).send({ password: PASSWORD });
+    expect(response.status).toBe(403);
+  });
+});
+
 describe("traçabilité", () => {
   it("chaîne d'audit intacte après tous les parcours", async () => {
     const problems = await owner.query("SELECT * FROM audit.verify_chain()");

@@ -81,6 +81,8 @@ export const refreshSchema = z.object({ refreshToken: z.string().min(1).max(64) 
 export const sessionIdParamsSchema = z.object({ sessionId: uuid }).strict();
 export const deviceIdParamsSchema = z.object({ deviceId: uuid }).strict();
 
+export const accountClosureSchema = z.object({ password }).strict();
+
 export const totpCodeSchema = z.object({ code: otpCode }).strict();
 
 const base64url = z.string().regex(/^[A-Za-z0-9_-]+$/).max(4096);

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import type { SessionSummary } from "@/lib/types";
 import { sessionApi } from "@/server/context";
 
-import { PasskeyPanel, SessionsPanel, TotpPanel } from "./SecurityPanels";
+import { ClosurePanel, PasskeyPanel, SessionsPanel, TotpPanel } from "./SecurityPanels";
 
 export const metadata: Metadata = { title: "Sécurité" };
 
@@ -18,6 +18,7 @@ export default async function SecurityPage(): Promise<ReactNode> {
         <PasskeyPanel />
       </div>
       <SessionsPanel sessions={sessions} />
+      <ClosurePanel />
     </>
   );
 }

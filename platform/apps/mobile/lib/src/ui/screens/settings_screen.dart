@@ -38,7 +38,100 @@ class SettingsTab extends StatelessWidget {
             if (confirmed == true) await services.session.signOut();
           },
         ),
+        ListTile(
+          leading: Icon(Icons.no_accounts_outlined, color: Theme.of(context).colorScheme.error),
+          title: Text('Clôturer mon compte', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          onTap: () => context.push('/cloture'),
+        ),
       ],
+    );
+  }
+}
+
+/// Clôture définitive du compte : mot de passe, confirmation explicite et
+/// biométrique, requête signée par l'appareil.
+class AccountClosureScreen extends StatefulWidget {
+  const AccountClosureScreen({super.key});
+
+  @override
+  State<AccountClosureScreen> createState() => _AccountClosureScreenState();
+}
+
+class _AccountClosureScreenState extends State<AccountClosureScreen> {
+  final _form = GlobalKey<FormState>();
+  final _password = TextEditingController();
+  bool _understood = false;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _close() async {
+    if (!_form.currentState!.validate()) return;
+    if (!_understood) {
+      setState(() => _error = 'Cochez la case pour confirmer la clôture.');
+      return;
+    }
+    final services = context.services;
+    if (!await services.lock.confirm('Confirmez la clôture de votre compte')) {
+      setState(() => _error = 'Confirmation biométrique requise.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await services.security.closeAccount(_password.text);
+      await services.session.accountClosed();
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = describeError(error));
+    } finally {
+      _password.clear();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Clôturer mon compte')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            if (_error != null) ErrorBanner(_error!),
+            const Text(
+              'La clôture est définitive : vos sessions, appareils et passkeys sont révoqués. Vos portefeuilles doivent être vides et aucun transfert ne doit être en cours. '
+              'Vos données sont conservées pour la durée imposée par la réglementation, puis supprimées.',
+            ),
+            const SizedBox(height: 16),
+            Form(
+              key: _form,
+              child: TextFormField(
+                controller: _password,
+                obscureText: true,
+                autofillHints: const [AutofillHints.password],
+                decoration: const InputDecoration(labelText: 'Mot de passe'),
+                validator: (value) => value != null && value.isNotEmpty ? null : 'Mot de passe requis',
+              ),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _understood,
+              onChanged: _busy ? null : (value) => setState(() => _understood = value ?? false),
+              title: const Text('Je comprends que la clôture de mon compte est définitive.'),
+            ),
+            const SizedBox(height: 8),
+            BusyButton(label: 'Clôturer définitivement mon compte', busy: _busy, onPressed: _close),
+          ],
+        ),
+      ),
     );
   }
 }

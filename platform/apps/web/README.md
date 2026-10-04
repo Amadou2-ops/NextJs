@@ -26,7 +26,7 @@ Site client TransfertPlus en Next.js 16 (App Router), conçu comme un
 - `/envoyer` : devis en direct, bénéficiaire, transfert (clé d'idempotence `web-<uuid>`), paiement
 - `/transferts`, `/transferts/[id]`, `/transferts/[id]/paiement` (Stripe Elements ou page hébergée)
 - `/beneficiaires`, `/portefeuille/[devise]`, `/verification` (KYC Onfido / Smile ID), `/securite`
-  (sessions, TOTP, clés d'accès)
+  (sessions, TOTP, clés d'accès, clôture du compte → `/compte-cloture`)
 
 ## Configuration
 

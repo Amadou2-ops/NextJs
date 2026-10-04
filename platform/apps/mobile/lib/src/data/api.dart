@@ -246,6 +246,9 @@ class SecurityApi {
 
   Future<void> confirmTotp(String code) async => _api.send(HttpMethod.post, '/v1/auth/mfa/totp/confirm', body: {'code': code}, signed: true);
 
+  /// Clôture définitive du compte (soldes nuls, aucun transfert en cours).
+  Future<void> closeAccount(String password) async => _api.send(HttpMethod.post, '/v1/auth/account/close', body: {'password': password}, signed: true);
+
   Future<void> disableTotp(String code) async => _api.send(HttpMethod.post, '/v1/auth/mfa/totp/disable', body: {'code': code}, signed: true);
 }
 

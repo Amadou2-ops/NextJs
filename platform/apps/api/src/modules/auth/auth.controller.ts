@@ -5,6 +5,7 @@ import { AuthenticationError } from "../../lib/errors.js";
 import type { AuthContext } from "../../auth/authContext.js";
 import { validatedBody, validatedParams } from "../../middlewares/validate.js";
 import {
+  accountClosureSchema,
   deviceIdParamsSchema,
   loginCompleteSchema,
   loginStartSchema,
@@ -165,6 +166,13 @@ export class AuthController {
     const auth = requireAuth(req);
     const count = await this.auth.revokeOtherSessions(auth.subjectId, auth.sessionId, contextOf(req));
     res.json({ revoked: count });
+  };
+
+  closeAccount = async (req: Request, res: Response): Promise<void> => {
+    const auth = requireAuth(req);
+    const body = validatedBody(req, accountClosureSchema);
+    await this.auth.closeAccount(auth.subjectId, body.password, contextOf(req));
+    res.status(204).end();
   };
 
   listDevices = async (req: Request, res: Response): Promise<void> => {
