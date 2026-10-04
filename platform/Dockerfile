@@ -12,8 +12,11 @@
 # recommandé (voir deploy/compose.production.yaml). Aucun secret n'entre dans
 # une image : toute la configuration est lue à l'exécution et validée au démarrage.
 
-ARG NODE_IMAGE=node:22-bookworm-slim
-ARG RUNTIME_IMAGE=gcr.io/distroless/nodejs22-debian12:nonroot
+# Debian 13 pour la construction comme pour l'exécution : modules natifs
+# (Argon2) liés à la même glibc ; la base Debian 12 portait des failles
+# OpenSSL corrigeables, refusées par l'analyse bloquante.
+ARG NODE_IMAGE=node:22-trixie-slim
+ARG RUNTIME_IMAGE=gcr.io/distroless/nodejs22-debian13:nonroot
 
 # -----------------------------------------------------------------------------
 # Dépendances (couche partagée, manifeste figé)
