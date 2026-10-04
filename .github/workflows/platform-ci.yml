@@ -218,13 +218,17 @@ jobs:
 
   mobile-ios:
     name: Application mobile (build iOS)
-    runs-on: macos-15
+    # Le SDK Stripe iOS actuel exige le SDK iOS 26 (Xcode 26).
+    runs-on: macos-26
     timeout-minutes: 45
     defaults:
       run:
         working-directory: platform/apps/mobile
     steps:
       - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.47.6
