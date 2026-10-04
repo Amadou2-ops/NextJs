@@ -48,6 +48,8 @@ tags:
     description: Personnel, rôles et réseaux autorisés
   - name: admin-audit
     description: Journal d'audit chaîné
+  - name: admin-configuration
+    description: Paramétrage (marges, barèmes, corridors, encaissement, prestataires, pays) ; modifications en double validation, écrites à l'identique de la demande approuvée
   - name: fx
     description: Simulation de transfert et devis garantis (taux, frais, montant reçu)
   - name: kyc
@@ -1880,6 +1882,424 @@ paths:
       responses:
         "200": { description: "Résultat", content: { application/json: { schema: { type: object } } } }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/pricing-rules:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPricingRules
+      summary: Marges de change (configuration:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [current, all], default: current }, description: "current : règles en vigueur ou programmées ; all : historique (500 au plus)" }
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/pricing-rule-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPricingRule
+      summary: Nouvelle marge, éventuellement en remplacement d'une autre (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [marginBps, justification]
+              properties:
+                sourceCurrency: { anyOf: [{ $ref: "#/components/schemas/CurrencyCode" }, { type: "null" }], default: null }
+                destinationCurrency: { anyOf: [{ $ref: "#/components/schemas/CurrencyCode" }, { type: "null" }], default: null }
+                marginBps: { type: integer, minimum: 0, maximum: 1500 }
+                priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+                validFrom: { type: [string, "null"], format: date-time, default: null, description: "null : effet à l'exécution ; sinon dans les 90 jours" }
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                replacesRuleId: { type: [string, "null"], format: uuid, default: null, description: "Marge du même périmètre close à la date d'effet" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/pricing-rules/{id}/closure-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPricingRuleClosure
+      summary: Clôture d'une marge (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/fee-schedules:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListFeeSchedules
+      summary: Barèmes de frais (configuration:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [current, all], default: current }, description: "current : règles en vigueur ou programmées ; all : historique (500 au plus)" }
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/fee-schedule-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestFeeSchedule
+      summary: Nouveau barème de frais (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourceCurrency, fixedFee, percentageBps, minFee, justification]
+              properties:
+                sourceCountry: { anyOf: [{ $ref: "#/components/schemas/CountryCode" }, { type: "null" }], default: null }
+                destinationCountry: { anyOf: [{ $ref: "#/components/schemas/CountryCode" }, { type: "null" }], default: null }
+                sourceCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                destinationCurrency: { anyOf: [{ $ref: "#/components/schemas/CurrencyCode" }, { type: "null" }], default: null }
+                payoutMethod: { anyOf: [{ $ref: "#/components/schemas/PayoutMethod" }, { type: "null" }], default: null }
+                fundingMethod: { anyOf: [{ type: string, enum: [wallet_balance, card, bank_transfer, mobile_money, apple_pay, google_pay] }, { type: "null" }], default: null }
+                fixedFee: { $ref: "#/components/schemas/MinorUnits" }
+                percentageBps: { type: integer, minimum: 0, maximum: 1000 }
+                minFee: { $ref: "#/components/schemas/MinorUnits" }
+                maxFee: { anyOf: [{ $ref: "#/components/schemas/MinorUnits" }, { type: "null" }], default: null }
+                priority: { type: integer, minimum: -1000, maximum: 1000, default: 0 }
+                validFrom: { type: [string, "null"], format: date-time, default: null }
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                replacesScheduleId: { type: [string, "null"], format: uuid, default: null }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/fee-schedules/{id}/closure-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestFeeScheduleClosure
+      summary: Clôture d'un barème (double validation, pricing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [justification]
+              properties:
+                validTo: { type: [string, "null"], format: date-time, default: null }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payout-corridors:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPayoutCorridors
+      summary: Corridors de paiement sortant (configuration:read)
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/payout-corridor-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayoutCorridor
+      summary: Nouveau corridor (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [destinationCountry, destinationCurrency, payoutMethod, provider, priority, minAmount, maxAmount, costFixed, costBps, estimatedDeliveryMinutes, isEnabled, justification]
+              properties:
+                sourceCountry: { anyOf: [{ $ref: "#/components/schemas/CountryCode" }, { type: "null" }], default: null }
+                destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+                destinationCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+                provider: { type: string, enum: [stripe, flutterwave, thunes] }
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                estimatedDeliveryMinutes: { type: integer, minimum: 0, maximum: 20160 }
+                isEnabled: { type: boolean }
+                providerRouteCode: { type: [string, "null"], pattern: "^[A-Za-z0-9_-]{1,40}$", default: null, description: "Code du payeur chez le prestataire (obligatoire pour Thunes)" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payout-corridors/{id}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayoutCorridorChange
+      summary: Modification des paramètres d'un corridor (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [priority, minAmount, maxAmount, costFixed, costBps, estimatedDeliveryMinutes, isEnabled, justification]
+              properties:
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                estimatedDeliveryMinutes: { type: integer, minimum: 0, maximum: 20160 }
+                isEnabled: { type: boolean }
+                providerRouteCode: { type: [string, "null"], pattern: "^[A-Za-z0-9_-]{1,40}$", default: null, description: "Code du payeur chez le prestataire (obligatoire pour Thunes)" }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payin-methods:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPayinMethods
+      summary: Moyens d'encaissement (configuration:read)
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/payin-method-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayinMethod
+      summary: Nouveau moyen d'encaissement (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [country, currency, fundingMethod, provider, priority, minAmount, maxAmount, costFixed, costBps, isEnabled, justification]
+              properties:
+                country: { $ref: "#/components/schemas/CountryCode" }
+                currency: { $ref: "#/components/schemas/CurrencyCode" }
+                fundingMethod: { type: string, enum: [card, bank_transfer, mobile_money, apple_pay, google_pay] }
+                provider: { type: string, enum: [stripe, flutterwave, thunes] }
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                isEnabled: { type: boolean }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/payin-methods/{id}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestPayinMethodChange
+      summary: Modification d'un moyen d'encaissement (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [priority, minAmount, maxAmount, costFixed, costBps, isEnabled, justification]
+              properties:
+                priority: { type: integer, minimum: -1000, maximum: 1000 }
+                minAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                maxAmount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                costFixed: { $ref: "#/components/schemas/MinorUnits" }
+                costBps: { type: integer, minimum: 0, maximum: 1000 }
+                isEnabled: { type: boolean }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/providers:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListPaymentProviders
+      summary: Prestataires de paiement et état du disjoncteur (configuration:read)
+      security:
+        - adminBearer: []
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/providers/{code}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestProviderChange
+      summary: Activation ou coupure d'un prestataire ; l'environnement ne change que par migration (double validation, routing:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string, enum: [stripe, flutterwave, thunes] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [isEnabled, justification]
+              properties:
+                isEnabled: { type: boolean }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/countries:
+    get:
+      tags: [admin-configuration]
+      operationId: adminListCountries
+      summary: Pays (configuration:read)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: filter, in: query, schema: { type: string, enum: [open, all], default: open }, description: "open : pays ouverts ou visés par une demande en cours" }
+      responses:
+        "200": { description: "Liste", content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationList" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/configuration/countries/{code}/change-requests:
+    post:
+      tags: [admin-configuration]
+      operationId: adminRequestCountryChange
+      summary: Ouverture et niveau de risque d'un pays ; un pays interdit reste fermé (double validation, countries:manage)
+      security:
+        - adminBearer: []
+      parameters:
+        - { name: code, in: path, required: true, schema: { $ref: "#/components/schemas/CountryCode" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [canSend, canReceive, riskLevel, justification]
+              properties:
+                canSend: { type: boolean }
+                canReceive: { type: boolean }
+                riskLevel: { type: string, enum: [low, medium, high, prohibited] }
+                justification: { type: string, minLength: 10, maxLength: 1000, description: "Justification consignée dans la demande et le journal daudit" }
+      responses:
+        "202": { description: "Demande en attente d'un second membre", content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalRequest" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /admin/configuration/quote-preview:
+    post:
+      tags: [admin-configuration]
+      operationId: adminQuotePreview
+      summary: Prix qu'obtiendrait un client à cet instant et règles appliquées, sans devis enregistré (configuration:read)
+      security:
+        - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourceCountry, destinationCountry, sourceCurrency, destinationCurrency, payoutMethod, fundingMethod, amount]
+              properties:
+                sourceCountry: { $ref: "#/components/schemas/CountryCode" }
+                destinationCountry: { $ref: "#/components/schemas/CountryCode" }
+                sourceCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                destinationCurrency: { $ref: "#/components/schemas/CurrencyCode" }
+                payoutMethod: { $ref: "#/components/schemas/PayoutMethod" }
+                fundingMethod: { $ref: "#/components/schemas/FundingMethod" }
+                amount: { $ref: "#/components/schemas/PositiveMinorUnits" }
+                amountType: { $ref: "#/components/schemas/AmountType" }
+      responses:
+        "200":
+          description: Prix et règles appliquées
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sendAmount, fee, totalToPay, receiveAmount, midRate, customerRate, marginBps, pricingRuleId, feeScheduleId, estimatedDeliveryMinutes, rateTimestamp]
+                properties:
+                  sendAmount: { $ref: "#/components/schemas/Money" }
+                  fee: { $ref: "#/components/schemas/Money" }
+                  totalToPay: { $ref: "#/components/schemas/Money" }
+                  receiveAmount: { $ref: "#/components/schemas/Money" }
+                  midRate: { $ref: "#/components/schemas/ExchangeRate" }
+                  customerRate: { $ref: "#/components/schemas/ExchangeRate" }
+                  marginBps: { type: integer }
+                  pricingRuleId: { type: [string, "null"], format: uuid }
+                  feeScheduleId: { type: string, format: uuid }
+                  estimatedDeliveryMinutes: { type: integer }
+                  rateTimestamp: { type: [string, "null"], format: date-time }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Problem" }
 components:
   securitySchemes:
     mobileBearer:
@@ -1964,6 +2384,14 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    ConfigurationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: "Éléments du paramétrage ; chacun porte pendingRequestId (demande de modification en cours, sinon null)."
+          items: { type: object, required: [pendingRequestId], properties: { pendingRequestId: { type: [string, "null"], format: uuid } } }
     CurrencyCode:
       type: string
       pattern: "^[A-Z]{3}$"

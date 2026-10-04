@@ -29,6 +29,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 15 | Mise en production : contrôle des comptes prestataires en lecture seule (identifiants, webhooks, environnement), publication mobile signée (Google Play, TestFlight), procédure d'ouverture sandbox puis live | ✅ |
 | 16 | Tests de bout en bout : Playwright sur une pile réelle (base, Redis, API, worker, site, back-office) ; inscription, TOTP, passkeys, clé de sécurité du personnel, quatre yeux, transfert remboursé, bénéficiaire sanctionné retenu ; job CI | ✅ |
 | 17 | Surveillance : métriques Prometheus de l'API et du worker (latences, tâches, registre, webhooks, outbox, transferts, conformité), 41 règles d'alerte testées (`promtool` et chaîne des journaux de bout en bout), Alertmanager (PagerDuty, Slack, veille externe), journaux centralisés (Alloy → Loki) avec alertes, tableau Grafana ; job CI | ✅ |
+| 18 | Paramétrage depuis le back-office : marges de change, barèmes de frais, corridors, moyens d'encaissement, prestataires et pays, avec aperçu du prix client ; chaque modification en double validation, écrite par la base à l'identique de la demande approuvée et sans effet rétroactif (0026) | ✅ |
 
 ## Démarrage local
 
@@ -51,7 +52,7 @@ pnpm db:verify                  # chaîne d'empreintes, soldes, balance généra
 ```
 platform/
   db/                      @transfertplus/db — schéma, migrateur, tests
-    migrations/            0001…0024, SQL versionné et immuable une fois appliqué
+    migrations/            0001…0026, SQL versionné et immuable une fois appliqué
     seed/                  données de référence (générées, idempotentes)
     scripts/               générateur des données de référence
     src/                   CLI : migrate | status | verify | seed | test

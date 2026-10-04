@@ -11,6 +11,20 @@ import {
   reverseJournalPayloadSchema,
   STAFF_ROLES,
 } from "./approvalActions.js";
+import {
+  closeRulePayloadSchema,
+  corridorChangePayloadSchema,
+  corridorCreatePayloadSchema,
+  countryPayloadSchema,
+  feeSchedulePayloadSchema,
+  FUNDING_METHODS,
+  PAYMENT_PROVIDERS,
+  payinChangePayloadSchema,
+  payinCreatePayloadSchema,
+  PAYOUT_METHODS,
+  pricingRulePayloadSchema,
+  providerPayloadSchema,
+} from "./configurationActions.js";
 
 /** Schémas stricts des routes du back-office (propriétés inconnues refusées). */
 
@@ -113,4 +127,73 @@ export const auditQuerySchema = z.strictObject({
   action: z.string().regex(/^[a-z_]+(\.[a-z_]+)+$/).optional(),
   before: z.string().regex(/^[1-9][0-9]{0,18}$/).optional(),
   limit,
+});
+
+// Paramétrage ----------------------------------------------------------------
+// Champs facultatifs de la requête = null explicite dans la demande (la base
+// compare chaque clé du contenu approuvé à la ligne écrite).
+const pricing = pricingRulePayloadSchema.shape;
+const fees = feeSchedulePayloadSchema.shape;
+const corridor = corridorCreatePayloadSchema.shape;
+
+export const ruleListQuerySchema = z.strictObject({ state: z.enum(["current", "all"]).default("current") });
+export const countryListQuerySchema = z.strictObject({ filter: z.enum(["open", "all"]).default("open") });
+export const providerParamsSchema = z.strictObject({ code: z.enum(PAYMENT_PROVIDERS) });
+export const countryParamsSchema = z.strictObject({ code: z.string().regex(/^[A-Z]{2}$/) });
+
+export const pricingRuleRequestSchema = z.strictObject({
+  sourceCurrency: pricing.sourceCurrency.default(null),
+  destinationCurrency: pricing.destinationCurrency.default(null),
+  marginBps: pricing.marginBps,
+  priority: pricing.priority.default(0),
+  validFrom: pricing.validFrom.default(null),
+  validTo: pricing.validTo.default(null),
+  replacesRuleId: pricing.replacesRuleId.default(null),
+  justification,
+});
+export const feeScheduleRequestSchema = z.strictObject({
+  sourceCountry: fees.sourceCountry.default(null),
+  destinationCountry: fees.destinationCountry.default(null),
+  sourceCurrency: fees.sourceCurrency,
+  destinationCurrency: fees.destinationCurrency.default(null),
+  payoutMethod: fees.payoutMethod.default(null),
+  fundingMethod: fees.fundingMethod.default(null),
+  fixedFee: fees.fixedFee,
+  percentageBps: fees.percentageBps,
+  minFee: fees.minFee,
+  maxFee: fees.maxFee.default(null),
+  priority: fees.priority.default(0),
+  validFrom: fees.validFrom.default(null),
+  validTo: fees.validTo.default(null),
+  replacesScheduleId: fees.replacesScheduleId.default(null),
+  justification,
+});
+export const closureRequestSchema = z.strictObject({ validTo: closeRulePayloadSchema.shape.validTo.default(null), justification });
+export const corridorRequestSchema = z.strictObject({
+  ...corridor,
+  sourceCountry: corridor.sourceCountry.default(null),
+  providerRouteCode: corridor.providerRouteCode.default(null),
+  justification,
+});
+export const corridorChangeRequestSchema = z.strictObject({
+  ...corridorChangePayloadSchema.shape,
+  providerRouteCode: corridorChangePayloadSchema.shape.providerRouteCode.default(null),
+  justification,
+});
+export const payinRequestSchema = z.strictObject({ ...payinCreatePayloadSchema.shape, justification });
+export const payinChangeRequestSchema = z.strictObject({ ...payinChangePayloadSchema.shape, justification });
+export const providerRequestSchema = z.strictObject({ ...providerPayloadSchema.shape, justification });
+export const countryRequestSchema = z.strictObject({ ...countryPayloadSchema.shape, justification });
+export const quotePreviewSchema = z.strictObject({
+  sourceCountry: z.string().regex(/^[A-Z]{2}$/),
+  destinationCountry: z.string().regex(/^[A-Z]{2}$/),
+  sourceCurrency: z.string().regex(/^[A-Z]{3}$/),
+  destinationCurrency: z.string().regex(/^[A-Z]{3}$/),
+  payoutMethod: z.enum(PAYOUT_METHODS),
+  fundingMethod: z.enum(FUNDING_METHODS),
+  amount: z
+    .string()
+    .regex(/^[1-9][0-9]{0,14}$/)
+    .transform((value) => BigInt(value)),
+  amountType: z.enum(["send", "receive"]).default("send"),
 });

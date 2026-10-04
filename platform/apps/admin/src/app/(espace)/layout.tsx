@@ -18,6 +18,7 @@ const NAVIGATION: readonly { readonly href: Route; readonly label: string; reado
   { href: "/aml/alertes", label: "Alertes LCB-FT", permission: "aml:alerts:read" },
   { href: "/aml/dossiers", label: "Dossiers", permission: "aml:alerts:read" },
   { href: "/registre", label: "Registre", permission: "ledger:read" },
+  { href: "/parametrage", label: "Paramétrage", permission: "configuration:read" },
   { href: "/personnel", label: "Personnel", permission: "admins:manage" },
   { href: "/audit", label: "Audit", permission: "audit:read" },
 ];

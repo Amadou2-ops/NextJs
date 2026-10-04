@@ -256,6 +256,30 @@ l'API d'administration (phase 9).
   définitivement fermé après deux comptes ou la première invitation émise
   par un membre (migration 0024).
 
+## Paramétrage (`configuration.admin.ts`, `configurationActions.ts`)
+
+- **Consultation** (`configuration:read`, conformité et administration) :
+  marges de change, barèmes de frais (en vigueur, programmés ou historique),
+  corridors de paiement sortant, moyens d'encaissement, prestataires (avec
+  l'état du disjoncteur) et pays ; chaque élément indique la demande de
+  modification en cours qui le vise, y compris un remplacement.
+- **Modifications en double validation** (`/v1/admin/configuration/*-requests`) :
+  nouvelle marge ou nouveau barème (effet immédiat ou programmé à 90 jours au
+  plus, remplacement de la règle du même périmètre), clôture, création et
+  modification de corridors et de moyens d'encaissement, activation ou
+  coupure d'un prestataire (`routing:manage`), ouverture et niveau de risque
+  d'un pays (`countries:manage`). Une création reçoit son identifiant dès la
+  demande : c'est la seule ligne que la base laissera écrire.
+- **Garanties de la base** (migration 0026) : le rôle applicatif n'écrit ces
+  tables qu'en exécutant une demande approuvée par un second membre, sur sa
+  cible exacte et avec les valeurs exactes de son contenu figé ; aucune date
+  d'effet ni de clôture dans le passé ; une clôture n'est jamais repoussée ;
+  pays, devise, mode et prestataire d'un corridor sont figés ; l'environnement
+  d'un prestataire (bac à sable / production) ne change que par migration ;
+  un pays interdit reste fermé.
+- **Aperçu** (`POST /v1/admin/configuration/quote-preview`) : prix qu'obtiendrait
+  un client à cet instant et règles appliquées, sans devis enregistré.
+
 ## Métriques (`src/observability`)
 
 - `METRICS_PORT` (désactivées sans) et `METRICS_HOST` (défaut `127.0.0.1`) :

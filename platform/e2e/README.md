@@ -39,6 +39,7 @@ Les journaux de chaque processus sont dans `.runtime/*.log`. En CI, le rapport, 
 | `01-client.spec.ts` | Estimation publique au taux du jour ; CSP à nonce ; inscription par code SMS ; cookie de session JWE `__Host-`, HttpOnly, Secure, Strict ; activation TOTP ; passkey ; déconnexion ; mot de passe erroné ; connexion avec second facteur TOTP ; connexion sans mot de passe par passkey ; refus d'une mutation d'une autre origine |
 | `02-back-office.spec.ts` | Enrôlement du binôme fondateur (mot de passe et clé de sécurité matérielle) ; lien d'invitation à usage unique ; connexion par clé ; règle des quatre yeux sur une invitation ; enrôlement d'un agent du support et habilitations limitées ; chaîne d'audit intacte ; refus d'une autre origine ; déconnexion |
 | `03-transfert.spec.ts` | Client vérifié ; portefeuille crédité par un ajustement comptable validé à deux ; envoi de 100 EUR vers le Sénégal (devis garanti, bénéficiaire, code TOTP) ; remboursement automatique faute de route de paiement sortant ; registre équilibré et rapprochement sain ; bénéficiaire sanctionné retenu avec une alerte bloquante côté conformité |
+| `04-parametrage.spec.ts` | Remplacement d'un barème de frais demandé par un membre du binôme fondateur, approuvé par le second : sans effet avant l'approbation, signalé sur le barème visé, appliqué ensuite à l'aperçu du prix client, ancien barème terminé ; pays interdit jamais ouvert |
 
 Chaque parcours vérifie aussi qu'aucune erreur JavaScript ni violation de la CSP ne s'est produite.
 
@@ -52,7 +53,7 @@ Tout passe par le vrai code, sauf ce que des services externes fourniraient :
 | Décision KYC du prestataire | Enregistrée en base comme le ferait le service KYC. L'identité déclarée est chiffrée par le chiffreur de champs de l'API ; le niveau est accordé par la base |
 | Ouverture du portefeuille | Réservée à l'application mobile (requête signée par l'appareil) : même fonction de la base, au nom du client |
 | Listes de sanctions | Formats officiels OFAC et ONU, entrées fictives (`fixtures/listes`), importées par le vrai worker |
-| Taux et corridor | Corridor France → Sénégal et taux enregistrés comme par l'exploitant et la tâche `fx-refresh` |
+| Taux et corridor | Paramétrage initial (corridor France → Sénégal, marge, barème) et taux enregistrés comme par l'exploitant et la tâche `fx-refresh` ; le barème est ensuite remplacé depuis le back-office (`04-`) |
 | Prestataires de paiement | Non configurés : un transfert financé est remboursé, comme en production sans route |
 | Clés de sécurité, passkeys | Authentificateurs virtuels de Chromium (CTAP2) |
 

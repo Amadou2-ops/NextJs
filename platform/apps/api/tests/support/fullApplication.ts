@@ -93,6 +93,7 @@ export async function createFullApplication(options: { readonly rateLimitPoints?
     indexer,
     ledger: transfers.stack.ledger,
     orchestrator: transfers.stack.orchestrator,
+    quotes: fx.quotes,
     limiters: { loginByIp: limiter, loginByEmail: limiter },
     breachChecker: null,
   });

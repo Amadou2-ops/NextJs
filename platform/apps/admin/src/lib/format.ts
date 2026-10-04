@@ -116,6 +116,16 @@ export const ACTION_TYPE_LABELS: Readonly<Record<string, string>> = {
   ledger_adjustment: "Ajustement comptable",
   reverse_journal: "Contre-passation d'un journal",
   file_sar: "Déclaration de soupçon",
+  create_pricing_rule: "Nouvelle marge de change",
+  close_pricing_rule: "Clôture d'une marge de change",
+  create_fee_schedule: "Nouveau barème de frais",
+  close_fee_schedule: "Clôture d'un barème de frais",
+  create_payout_corridor: "Nouveau corridor de paiement sortant",
+  update_payout_corridor: "Modification d'un corridor",
+  create_payin_method: "Nouveau moyen d'encaissement",
+  update_payin_method: "Modification d'un moyen d'encaissement",
+  set_payment_provider: "Activation / coupure d'un prestataire",
+  update_country: "Ouverture et risque d'un pays",
 };
 
 export const PERMISSION_LABELS: Readonly<Record<Permission, string>> = {
@@ -141,6 +151,7 @@ export const PERMISSION_LABELS: Readonly<Record<Permission, string>> = {
   "admins:manage": "Gérer le personnel",
   "audit:read": "Consulter le journal d'audit",
   "approvals:decide": "Statuer sur les demandes",
+  "configuration:read": "Consulter le paramétrage",
 };
 
 export function label(labels: Readonly<Record<string, string>>, value: string): string {

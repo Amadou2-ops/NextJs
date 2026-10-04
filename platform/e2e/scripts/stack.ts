@@ -183,8 +183,9 @@ async function resetDatabase(): Promise<void> {
   await run(process.execPath, ["--import", "tsx", "src/cli.ts", "migrate"], { cwd: join(PLATFORM, "db"), env });
   await run(process.execPath, ["--import", "tsx", "src/cli.ts", "seed"], { cwd: join(PLATFORM, "db"), env });
 
-  // Configuration d'exploitation (back-office de paramétrage hors périmètre) et
-  // taux tels que la tâche fx-refresh les enregistre : 1 USD = 0,92 EUR = 603,48 XOF.
+  // Configuration initiale d'exploitation (modifiable ensuite depuis le
+  // back-office : parcours 04-parametrage) et taux tels que la tâche
+  // fx-refresh les enregistre : 1 USD = 0,92 EUR = 603,48 XOF.
   const owner = new pg.Client({ connectionString: ownerDatabaseUrl });
   await owner.connect();
   try {

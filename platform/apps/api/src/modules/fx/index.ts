@@ -18,6 +18,16 @@ export interface FxModule {
   readonly quotes: QuoteService;
 }
 
+/** Moteur de devis (également utilisé par l'aperçu du back-office). */
+export function createQuoteService(config: AppConfig, pool: DatabasePool): QuoteService {
+  return new QuoteService(pool, {
+    primaryProvider: config.fx.primaryProvider,
+    maxRateAgeMs: config.fx.maxRateAgeMs,
+    maxDivergenceBps: config.fx.maxDivergenceBps,
+    quoteTtlSeconds: config.fx.quoteTtlSeconds,
+  });
+}
+
 export function createFxModule(params: {
   readonly config: AppConfig;
   readonly pool: DatabasePool;
@@ -25,12 +35,7 @@ export function createFxModule(params: {
   readonly sessions: SessionValidator;
   readonly limiters: { readonly estimateByIp: RateLimiterAbstract; readonly quotesBySubject: RateLimiterAbstract };
 }): FxModule {
-  const quotes = new QuoteService(params.pool, {
-    primaryProvider: params.config.fx.primaryProvider,
-    maxRateAgeMs: params.config.fx.maxRateAgeMs,
-    maxDivergenceBps: params.config.fx.maxDivergenceBps,
-    quoteTtlSeconds: params.config.fx.quoteTtlSeconds,
-  });
+  const quotes = createQuoteService(params.config, params.pool);
   return { router: fxRoutes({ quotes, verifier: params.verifier, sessions: params.sessions, limiters: params.limiters }), quotes };
 }
 

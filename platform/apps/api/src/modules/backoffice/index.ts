@@ -10,12 +10,14 @@ import type { BlindIndexer } from "../../lib/crypto/blindIndex.js";
 import type { FieldEncryptor } from "../../lib/crypto/fieldEncryption.js";
 import { createPwnedPasswordsChecker, PasswordService } from "../auth/password.service.js";
 import type { LedgerService } from "../ledger/ledger.service.js";
+import type { QuoteService } from "../fx/quote.service.js";
 import type { PaymentOrchestrator } from "../transfers/payment.orchestrator.js";
 import { AdminAuthService } from "./adminAuth.service.js";
 import { createApprovalRegistry } from "./approvalActions.js";
 import { ApprovalService } from "./approvals.service.js";
 import { backofficeRoutes } from "./backoffice.routes.js";
 import { ComplianceAdminService } from "./compliance.admin.js";
+import { ConfigurationAdminService } from "./configuration.admin.js";
 import { CustomersAdminService } from "./customers.admin.js";
 import { StaffAdminService } from "./staff.admin.js";
 import { TransfersAdminService } from "./transfers.admin.js";
@@ -42,6 +44,7 @@ export function createBackofficeModule(params: {
   readonly indexer: BlindIndexer;
   readonly ledger: LedgerService;
   readonly orchestrator: PaymentOrchestrator;
+  readonly quotes: QuoteService;
   readonly limiters: { readonly loginByIp: RateLimiterAbstract; readonly loginByEmail: RateLimiterAbstract };
   readonly breachChecker?: ((password: string) => Promise<boolean>) | null;
 }): BackofficeModule {
@@ -66,6 +69,7 @@ export function createBackofficeModule(params: {
     transfers: new TransfersAdminService({ pool, orchestrator: params.orchestrator }),
     compliance: new ComplianceAdminService({ pool, encryptor: params.encryptor, verificationValidityDays: config.kyc.verificationValidityDays }),
     staff: new StaffAdminService({ pool, admin: config.admin }),
+    configuration: new ConfigurationAdminService({ pool, quotes: params.quotes }),
     limiters: params.limiters,
   });
   return { router, auth, approvals };

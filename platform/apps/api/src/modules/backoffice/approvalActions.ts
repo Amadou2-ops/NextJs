@@ -8,6 +8,7 @@ import { assertBalanced } from "../ledger/ledger.service.js";
 import type { LedgerService, Posting } from "../ledger/ledger.service.js";
 import type { PaymentOrchestrator } from "../transfers/payment.orchestrator.js";
 import { generateInvitationToken } from "./adminAuth.service.js";
+import { configurationApprovals } from "./configurationActions.js";
 import { defineApproval } from "./approvals.service.js";
 import type { ApprovalDefinition, ApprovalRegistry, RegisteredApproval } from "./approvals.service.js";
 
@@ -286,5 +287,6 @@ export function createApprovalRegistry(deps: {
     ["ledger_adjustment", defineApproval(ledgerAdjustment)],
     ["reverse_journal", defineApproval(reverseJournal)],
     ["file_sar", defineApproval(fileSar)],
+    ...configurationApprovals(),
   ]);
 }

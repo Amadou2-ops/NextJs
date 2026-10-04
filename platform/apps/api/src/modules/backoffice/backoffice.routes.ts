@@ -25,10 +25,17 @@ import {
   caseCreateSchema,
   caseListQuerySchema,
   caseTransitionSchema,
+  closureRequestSchema,
+  corridorChangeRequestSchema,
+  corridorRequestSchema,
+  countryListQuerySchema,
+  countryParamsSchema,
+  countryRequestSchema,
   customerSearchQuerySchema,
   customerStatusSchema,
   enrollmentCompleteSchema,
   enrollmentOptionsSchema,
+  feeScheduleRequestSchema,
   idParamsSchema,
   invitationRequestSchema,
   justificationSchema,
@@ -39,6 +46,12 @@ import {
   loginVerifySchema,
   networkRequestSchema,
   noteSchema,
+  payinChangeRequestSchema,
+  payinRequestSchema,
+  pricingRuleRequestSchema,
+  providerParamsSchema,
+  providerRequestSchema,
+  quotePreviewSchema,
   reasonSchema,
   refreshSchema,
   refundRequestSchema,
@@ -46,12 +59,14 @@ import {
   reversalRequestSchema,
   roleParamsSchema,
   roleRequestSchema,
+  ruleListQuerySchema,
   sarRequestSchema,
   staffListQuerySchema,
   staffRestrictionSchema,
   transferListQuerySchema,
 } from "./backoffice.schemas.js";
 import type { ComplianceAdminService } from "./compliance.admin.js";
+import type { ConfigurationAdminService } from "./configuration.admin.js";
 import type { CustomersAdminService } from "./customers.admin.js";
 import type { StaffAdminService } from "./staff.admin.js";
 import type { TransfersAdminService } from "./transfers.admin.js";
@@ -69,6 +84,7 @@ import type { TransfersAdminService } from "./transfers.admin.js";
  *   Approbations       /v1/admin/approvals      file, approbation + exécution, refus
  *   Personnel          /v1/admin/staff          invitations, rôles, réseau (4 yeux), suspension
  *   Audit              /v1/admin/audit          journal chaîné, vérification d'intégrité
+ *   Paramétrage        /v1/admin/configuration  marges, barèmes, corridors, encaissement, prestataires, pays (4 yeux)
  */
 
 export interface BackofficeRouterDependencies extends AdminAccessDependencies {
@@ -78,6 +94,7 @@ export interface BackofficeRouterDependencies extends AdminAccessDependencies {
   readonly transfers: TransfersAdminService;
   readonly compliance: ComplianceAdminService;
   readonly staff: StaffAdminService;
+  readonly configuration: ConfigurationAdminService;
   readonly limiters: { readonly loginByIp: RateLimiterAbstract; readonly loginByEmail: RateLimiterAbstract };
 }
 
@@ -451,6 +468,150 @@ export function backofficeRoutes(deps: BackofficeRouterDependencies): Router {
       const { id } = validatedParams(req, idParamsSchema);
       const body = validatedBody(req, reversalRequestSchema);
       res.status(202).json(await deps.approvals.request(adminContextOf(req), { actionType: "reverse_journal", targetId: id, payload: { reason: body.reason }, justification: body.justification }));
+    }),
+  );
+
+  // ---------------------------------------------------------------------------
+  // Paramétrage : consultation (configuration:read), modifications en double
+  // validation. Une création reçoit son identifiant dès la demande : c'est la
+  // cible exacte que la base autorisera à l'exécution.
+  // ---------------------------------------------------------------------------
+  const requestApproval = async (req: Request, res: Response, actionType: string, targetId: string, body: { readonly justification: string } & Readonly<Record<string, unknown>>): Promise<void> => {
+    const { justification, ...payload } = body;
+    res.status(202).json(await deps.approvals.request(adminContextOf(req), { actionType, targetId, payload, justification }));
+  };
+
+  router.get(
+    "/v1/admin/configuration/pricing-rules",
+    ...can("configuration:read"),
+    validate({ query: ruleListQuerySchema }),
+    handle(async (req, res) => {
+      res.json(await deps.configuration.pricingRules(validatedQuery(req, ruleListQuerySchema).state));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/pricing-rule-requests",
+    ...can("pricing:manage"),
+    validate({ body: pricingRuleRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "create_pricing_rule", randomUUID(), validatedBody(req, pricingRuleRequestSchema));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/pricing-rules/:id/closure-requests",
+    ...can("pricing:manage"),
+    validate({ params: idParamsSchema, body: closureRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "close_pricing_rule", validatedParams(req, idParamsSchema).id, validatedBody(req, closureRequestSchema));
+    }),
+  );
+  router.get(
+    "/v1/admin/configuration/fee-schedules",
+    ...can("configuration:read"),
+    validate({ query: ruleListQuerySchema }),
+    handle(async (req, res) => {
+      res.json(await deps.configuration.feeSchedules(validatedQuery(req, ruleListQuerySchema).state));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/fee-schedule-requests",
+    ...can("pricing:manage"),
+    validate({ body: feeScheduleRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "create_fee_schedule", randomUUID(), validatedBody(req, feeScheduleRequestSchema));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/fee-schedules/:id/closure-requests",
+    ...can("pricing:manage"),
+    validate({ params: idParamsSchema, body: closureRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "close_fee_schedule", validatedParams(req, idParamsSchema).id, validatedBody(req, closureRequestSchema));
+    }),
+  );
+  router.get(
+    "/v1/admin/configuration/payout-corridors",
+    ...can("configuration:read"),
+    handle(async (_req, res) => {
+      res.json(await deps.configuration.payoutCorridors());
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/payout-corridor-requests",
+    ...can("routing:manage"),
+    validate({ body: corridorRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "create_payout_corridor", randomUUID(), validatedBody(req, corridorRequestSchema));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/payout-corridors/:id/change-requests",
+    ...can("routing:manage"),
+    validate({ params: idParamsSchema, body: corridorChangeRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "update_payout_corridor", validatedParams(req, idParamsSchema).id, validatedBody(req, corridorChangeRequestSchema));
+    }),
+  );
+  router.get(
+    "/v1/admin/configuration/payin-methods",
+    ...can("configuration:read"),
+    handle(async (_req, res) => {
+      res.json(await deps.configuration.payinMethods());
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/payin-method-requests",
+    ...can("routing:manage"),
+    validate({ body: payinRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "create_payin_method", randomUUID(), validatedBody(req, payinRequestSchema));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/payin-methods/:id/change-requests",
+    ...can("routing:manage"),
+    validate({ params: idParamsSchema, body: payinChangeRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "update_payin_method", validatedParams(req, idParamsSchema).id, validatedBody(req, payinChangeRequestSchema));
+    }),
+  );
+  router.get(
+    "/v1/admin/configuration/providers",
+    ...can("configuration:read"),
+    handle(async (_req, res) => {
+      res.json(await deps.configuration.providers());
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/providers/:code/change-requests",
+    ...can("routing:manage"),
+    validate({ params: providerParamsSchema, body: providerRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "set_payment_provider", validatedParams(req, providerParamsSchema).code, validatedBody(req, providerRequestSchema));
+    }),
+  );
+  router.get(
+    "/v1/admin/configuration/countries",
+    ...can("configuration:read"),
+    validate({ query: countryListQuerySchema }),
+    handle(async (req, res) => {
+      res.json(await deps.configuration.countries(validatedQuery(req, countryListQuerySchema).filter));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/countries/:code/change-requests",
+    ...can("countries:manage"),
+    validate({ params: countryParamsSchema, body: countryRequestSchema }),
+    handle(async (req, res) => {
+      await requestApproval(req, res, "update_country", validatedParams(req, countryParamsSchema).code, validatedBody(req, countryRequestSchema));
+    }),
+  );
+  router.post(
+    "/v1/admin/configuration/quote-preview",
+    ...can("configuration:read"),
+    validate({ body: quotePreviewSchema }),
+    handle(async (req, res) => {
+      res.json(await deps.configuration.previewQuote(validatedBody(req, quotePreviewSchema)));
     }),
   );
 

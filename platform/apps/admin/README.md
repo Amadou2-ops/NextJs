@@ -32,6 +32,7 @@ cookie chiffré.
 | Identité (KYC) | `kyc:read` | décision motivée, identité de la pièce sur demande tracée |
 | Alertes / Dossiers LCB-FT | `aml:alerts:read` | prise en charge, escalade, clôture, dossiers, déclaration de soupçon (double validation) |
 | Registre | `ledger:read` | balance, intégrité et ancrage, comptes, journaux ; gel, contre-passation et ajustement équilibré (double validation) |
+| Paramétrage | `configuration:read` | marges de change, barèmes de frais, corridors, encaissement, prestataires, pays, aperçu du prix client ; demandes de création, modification et clôture (double validation : `pricing:manage`, `routing:manage`, `countries:manage`), saisie en pourcentages, montants décimaux et heure de Paris |
 | Personnel | `admins:manage` | invitation, rôles, réseaux, réactivation (double validation) ; suspension, désactivation, retrait de rôle (immédiats) |
 | Audit | `audit:read` | journal chaîné filtrable, vérification de la chaîne de hachage |
 

@@ -137,6 +137,7 @@ async function main(): Promise<void> {
     indexer: authModule.indexer,
     ledger: transfersModule.stack.ledger,
     orchestrator: transfersModule.stack.orchestrator,
+    quotes: fxModule.quotes,
     limiters: {
       loginByIp: createRedisRateLimiter(redis, ADMIN_LOGIN_IP_RATE_LIMIT),
       loginByEmail: createRedisRateLimiter(redis, ADMIN_LOGIN_EMAIL_RATE_LIMIT),

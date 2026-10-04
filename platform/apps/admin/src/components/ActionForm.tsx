@@ -16,13 +16,15 @@ import type { AdminActionState } from "@/server/actionState";
 export interface FieldSpec {
   readonly name: string;
   readonly label: string;
-  readonly kind: "text" | "textarea" | "select" | "checkboxes";
+  readonly kind: "text" | "textarea" | "select" | "checkboxes" | "datetime";
   readonly options?: readonly { readonly value: string; readonly label: string }[];
   readonly required?: boolean;
   readonly minLength?: number;
   readonly maxLength?: number;
   readonly placeholder?: string;
   readonly help?: string;
+  /** Valeur initiale (modification d'un paramétrage existant). */
+  readonly defaultValue?: string;
 }
 
 interface ActionFormProps {
@@ -40,7 +42,7 @@ interface ActionFormProps {
 function Field({ field, state, formId }: { readonly field: FieldSpec; readonly state: AdminActionState; readonly formId: string }): ReactNode {
   const id = `${formId}-${field.name}`;
   const error = state.status === "error" ? state.fields[field.name] : undefined;
-  const previous = state.status === "error" ? state.values?.[field.name] : undefined;
+  const previous = state.status === "error" ? state.values?.[field.name] : field.defaultValue;
   const described = error === undefined ? undefined : `${id}-erreur`;
   let control: ReactNode;
   switch (field.kind) {
@@ -88,6 +90,19 @@ function Field({ field, state, formId }: { readonly field: FieldSpec; readonly s
           )}
         </fieldset>
       );
+    case "datetime":
+      control = (
+        <input
+          id={id}
+          name={field.name}
+          type="datetime-local"
+          defaultValue={previous}
+          required={field.required ?? true}
+          aria-invalid={error !== undefined}
+          aria-describedby={described}
+        />
+      );
+      break;
     case "text":
       control = (
         <input

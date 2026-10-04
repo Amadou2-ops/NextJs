@@ -14,6 +14,7 @@ import type { ListEntry, ListSource } from "../../src/modules/aml/lists/sources.
 import { DeviceBindingService } from "../../src/modules/auth/deviceBinding.service.js";
 import { MfaService } from "../../src/modules/auth/mfa.service.js";
 import { createBackofficeModule } from "../../src/modules/backoffice/index.js";
+import { createQuoteService } from "../../src/modules/fx/index.js";
 import { createLedgerModule } from "../../src/modules/ledger/index.js";
 import { generateTotpSecret, hotp, timeStep } from "../../src/modules/auth/totp.js";
 import { configuredPaymentProviders, createTransfersModule } from "../../src/modules/transfers/index.js";
@@ -125,6 +126,7 @@ export async function createPaymentHarness(extraConfig: Record<string, string> =
     indexer,
     ledger: transfersModule.stack.ledger,
     orchestrator,
+    quotes: createQuoteService(config, apiPool),
     limiters: {
       loginByIp: createMemoryRateLimiter({ keyPrefix: "admin-login-ip", points: 1000, durationSeconds: 60, blockDurationSeconds: 0 }),
       loginByEmail: createMemoryRateLimiter({ keyPrefix: "admin-login-email", points: 1000, durationSeconds: 60, blockDurationSeconds: 0 }),
