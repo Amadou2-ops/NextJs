@@ -67,3 +67,7 @@ th { font-size: 0.85rem; color: var(--color-muted); font-weight: 600; }
 .hero h1 { font-size: 2.3rem; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+
+ol.row { list-style: none; padding: 0; margin: 0; gap: 1.25rem; }
+ol.row li { color: var(--color-muted); }
+ol.row li[aria-current="step"] { color: var(--color-primary); font-weight: 700; }

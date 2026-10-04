@@ -17,7 +17,8 @@
     "db:status": "pnpm --filter @transfertplus/db run status",
     "db:verify": "pnpm --filter @transfertplus/db run verify",
     "db:seed": "pnpm --filter @transfertplus/db run seed",
-    "db:test": "pnpm --filter @transfertplus/db run test"
+    "db:test": "pnpm --filter @transfertplus/db run test",
+    "demo": "pnpm --filter @transfertplus/web build && pnpm --filter @transfertplus/admin build && pnpm --filter @transfertplus/e2e demo"
   },
   "devDependencies": {
     "turbo": "^2.11.7",

@@ -124,6 +124,8 @@ export const CORRIDORS = [
   { country: "CI", name: "Côte d'Ivoire", currency: "XOF", payoutMethods: ["mobile_money", "bank_account", "cash_pickup"] },
   { country: "ML", name: "Mali", currency: "XOF", payoutMethods: ["mobile_money", "cash_pickup"] },
   { country: "BF", name: "Burkina Faso", currency: "XOF", payoutMethods: ["mobile_money", "cash_pickup"] },
+  { country: "NE", name: "Niger", currency: "XOF", payoutMethods: ["mobile_money", "cash_pickup"] },
+  { country: "MR", name: "Mauritanie", currency: "MRU", payoutMethods: ["mobile_money", "bank_account"] },
   { country: "CM", name: "Cameroun", currency: "XAF", payoutMethods: ["mobile_money", "bank_account"] },
   { country: "MA", name: "Maroc", currency: "MAD", payoutMethods: ["bank_account", "cash_pickup"] },
   { country: "NG", name: "Nigeria", currency: "NGN", payoutMethods: ["bank_account", "mobile_money"] },

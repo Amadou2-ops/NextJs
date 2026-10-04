@@ -16,6 +16,8 @@ const List<Corridor> corridors = [
   Corridor('CI', "Côte d'Ivoire", 'XOF', [PayoutMethod.mobileMoney, PayoutMethod.bankAccount, PayoutMethod.cashPickup]),
   Corridor('ML', 'Mali', 'XOF', [PayoutMethod.mobileMoney, PayoutMethod.cashPickup]),
   Corridor('BF', 'Burkina Faso', 'XOF', [PayoutMethod.mobileMoney, PayoutMethod.cashPickup]),
+  Corridor('NE', 'Niger', 'XOF', [PayoutMethod.mobileMoney, PayoutMethod.cashPickup]),
+  Corridor('MR', 'Mauritanie', 'MRU', [PayoutMethod.mobileMoney, PayoutMethod.bankAccount]),
   Corridor('CM', 'Cameroun', 'XAF', [PayoutMethod.mobileMoney, PayoutMethod.bankAccount]),
   Corridor('MA', 'Maroc', 'MAD', [PayoutMethod.bankAccount, PayoutMethod.cashPickup]),
   Corridor('NG', 'Nigeria', 'NGN', [PayoutMethod.bankAccount, PayoutMethod.mobileMoney]),

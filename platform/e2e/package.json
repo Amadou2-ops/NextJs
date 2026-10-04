@@ -6,6 +6,7 @@
   "description": "Tests de bout en bout du site client et du back-office sur une pile réelle (PostgreSQL, Redis, API, BFF).",
   "scripts": {
     "e2e": "tsx scripts/stack.ts",
+    "demo": "tsx scripts/demo.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
