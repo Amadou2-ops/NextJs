@@ -261,6 +261,8 @@ jobs:
             platform/e2e/playwright-report
             platform/e2e/test-results
             platform/e2e/.runtime/*.log
+          # .runtime est un dossier caché : exclu sans cette option.
+          include-hidden-files: true
           retention-days: 14
 
   e2e-mobile:
@@ -324,6 +326,7 @@ jobs:
         with:
           name: e2e-mobile-journaux
           path: platform/e2e/.runtime/*.log
+          include-hidden-files: true
           retention-days: 14
 
   monitoring:
