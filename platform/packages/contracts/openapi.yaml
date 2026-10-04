@@ -1086,7 +1086,7 @@ components:
     ErrorCode:
       type: string
       description: |
-        Codes métier stables. Les codes LG*/TR*/PY*/KY*/BO* reprennent les
+        Codes métier stables. Les codes LG*/TR*/PY*/KY*/AM*/BO* reprennent les
         SQLSTATE levés par la base (voir db/migrations/0001).
       enum:
         - INSUFFICIENT_FUNDS
@@ -1103,6 +1103,7 @@ components:
         - INVALID_PAYMENT_TRANSITION
         - FOUR_EYES_VIOLATION
         - KYC_LIMIT_EXCEEDED
+        - COMPLIANCE_BLOCKED
         - INVALID_CREDENTIALS
         - INVALID_VERIFICATION_CODE
         - VERIFICATION_EXPIRED

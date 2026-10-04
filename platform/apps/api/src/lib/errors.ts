@@ -22,6 +22,7 @@ export const ERROR_CODES = [
   "INVALID_PAYMENT_TRANSITION",
   "FOUR_EYES_VIOLATION",
   "KYC_LIMIT_EXCEEDED",
+  "COMPLIANCE_BLOCKED",
   "INVALID_CREDENTIALS",
   "INVALID_VERIFICATION_CODE",
   "VERIFICATION_EXPIRED",
@@ -192,6 +193,12 @@ const SQLSTATE_MAPPINGS: Readonly<Record<string, SqlStateMapping>> = {
     status: 403,
     title: "Plafond de vérification atteint",
     clientDetail: "Ce transfert dépasse les plafonds de votre niveau de vérification d'identité. Complétez votre vérification pour les relever.",
+  },
+  AM001: {
+    code: "COMPLIANCE_BLOCKED",
+    status: 403,
+    title: "Opération bloquée par la conformité",
+    clientDetail: "Votre compte ne permet plus d'émettre de transfert. Contactez le service client.",
   },
   BO001: { code: "FOUR_EYES_VIOLATION", status: 403, title: "Double validation requise", clientDetail: "Cette action exige l'approbation d'un second membre habilité." },
 };

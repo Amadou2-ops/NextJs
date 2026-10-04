@@ -37,6 +37,8 @@ function baseEnv(overrides: Record<string, string> = {}): Record<string, string>
     FLUTTERWAVE_SECRET_KEY: `FLWSECK-${"e".repeat(32)}-X`,
     FLUTTERWAVE_WEBHOOK_HASH: "f".repeat(32),
     FLUTTERWAVE_REDIRECT_URL: "https://app.transfertplus.com/paiement/retour",
+    AML_OPENSANCTIONS_PEP_URL: "https://data.opensanctions.org/datasets/latest/peps/targets.simple.csv",
+    AML_OPENSANCTIONS_API_KEY: "o".repeat(32),
     ...overrides,
   };
 }
@@ -74,6 +76,8 @@ describe("configuration", () => {
     ["aucun fournisseur de taux", { OPEN_EXCHANGE_RATES_APP_ID: "" }],
     ["aucun prestataire KYC", { ONFIDO_API_TOKEN: "", ONFIDO_WEBHOOK_TOKEN: "" }],
     ["aucun prestataire de paiement", { FLUTTERWAVE_SECRET_KEY: "", FLUTTERWAVE_WEBHOOK_HASH: "", FLUTTERWAVE_REDIRECT_URL: "" }],
+    ["aucune liste PEP", { AML_OPENSANCTIONS_PEP_URL: "", AML_OPENSANCTIONS_API_KEY: "" }],
+    ["liste AML en clair", { AML_UN_LIST_URL: "http://scsanctions.un.org/resources/xml/en/consolidated.xml" }],
     ["clé Flutterwave de test", { FLUTTERWAVE_SECRET_KEY: `FLWSECK_TEST-${"e".repeat(32)}-X` }],
     [
       "clé Stripe de test",

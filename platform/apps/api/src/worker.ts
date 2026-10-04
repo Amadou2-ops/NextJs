@@ -7,6 +7,7 @@ import { ChainAnchorJob } from "./jobs/anchor.job.js";
 import { FxRefreshJob } from "./jobs/fxRefresh.job.js";
 import { MaintenanceJob } from "./jobs/maintenance.job.js";
 import { ReconciliationJob } from "./jobs/reconciliation.job.js";
+import { AmlListsJob } from "./jobs/amlLists.job.js";
 import { KycSyncJob } from "./jobs/kycSync.job.js";
 import { PaymentSyncJob } from "./jobs/paymentSync.job.js";
 import { JobScheduler } from "./jobs/scheduler.js";
@@ -15,6 +16,8 @@ import { WebhookRetryJob } from "./jobs/webhookRetry.job.js";
 import { BlindIndexer } from "./lib/crypto/blindIndex.js";
 import { FieldEncryptor, KeyringKeyProvider } from "./lib/crypto/fieldEncryption.js";
 import { parsePemBundle, TimestampAuthorityClient } from "./lib/crypto/rfc3161.js";
+import { configuredListSources } from "./modules/aml/index.js";
+import { ListIngestionService } from "./modules/aml/listIngestion.service.js";
 import { configuredRateProviders, createRateIngestion } from "./modules/fx/index.js";
 import { configuredKycProviders, createKycService } from "./modules/kyc/index.js";
 import { registerKycWebhookHandlers } from "./modules/kyc/kyc.webhooks.js";
@@ -56,6 +59,7 @@ async function main(): Promise<void> {
   } else {
     jobs.push(new FxRefreshJob(createRateIngestion(config, pool, logger), rateProviders, logger, config.fx.refreshIntervalMs));
   }
+  jobs.push(new AmlListsJob(new ListIngestionService(pool, logger), configuredListSources(config), logger, config.aml.listsRefreshMs));
   const kycProviders = configuredKycProviders(config);
   const inbox = new WebhookInbox(pool, logger);
   const encryptor = new FieldEncryptor(new KeyringKeyProvider(config.crypto.piiKeyring.activeKeyId, config.crypto.piiKeyring.keys));

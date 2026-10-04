@@ -244,6 +244,17 @@ const rawEnvironmentSchema = z.object({
   CIRCUIT_OPEN_SECONDS: z.coerce.number().int().min(10).max(3600).default(60),
   PAYMENTS_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(60).default(5),
 
+  // Lutte anti-blanchiment : listes de criblage et seuil de correspondance.
+  AML_OFAC_SDN_URL: z.url({ protocol: /^https?$/ }).default("https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"),
+  AML_OFAC_ALT_URL: z.url({ protocol: /^https?$/ }).default("https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ALT.CSV"),
+  AML_UN_LIST_URL: z.url({ protocol: /^https?$/ }).default("https://scsanctions.un.org/resources/xml/en/consolidated.xml"),
+  // Liste PPE OpenSanctions (licence commerciale requise) : activée si l'URL est fournie.
+  AML_OPENSANCTIONS_PEP_URL: z.url({ protocol: /^https?$/ }).optional(),
+  AML_OPENSANCTIONS_API_KEY: z.string().min(16).optional(),
+  AML_MATCH_THRESHOLD: z.coerce.number().min(0.75).max(0.99).default(0.88),
+  AML_LISTS_MAX_AGE_HOURS: z.coerce.number().int().min(6).max(168).default(48),
+  AML_LISTS_REFRESH_HOURS: z.coerce.number().int().min(1).max(48).default(6),
+
   // Périodicité des tâches de fond (worker).
   RECONCILIATION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   ANCHOR_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
@@ -359,6 +370,15 @@ export interface AppConfig {
     readonly circuitFailureThreshold: number;
     readonly circuitOpenSeconds: number;
     readonly syncIntervalMs: number;
+  };
+  readonly aml: {
+    readonly ofacSdnUrl: string;
+    readonly ofacAltUrl: string;
+    readonly unListUrl: string;
+    readonly openSanctionsPep: { readonly url: string; readonly apiKey: string | undefined } | undefined;
+    readonly matchThreshold: number;
+    readonly listsMaxAgeHours: number;
+    readonly listsRefreshMs: number;
   };
   readonly ledger: {
     readonly timestampAuthority: { readonly url: string; readonly trustedCertsPem: string; readonly target: string } | undefined;
@@ -489,6 +509,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     }
     if (raw.STRIPE_SECRET_KEY?.includes("_test_") === true) problems.push("la production exige une clé Stripe live");
     if (raw.FLUTTERWAVE_SECRET_KEY?.startsWith("FLWSECK_TEST") === true) problems.push("la production exige une clé Flutterwave live");
+    if (raw.AML_OPENSANCTIONS_PEP_URL === undefined) problems.push("la production exige une liste de personnes politiquement exposées (AML_OPENSANCTIONS_PEP_URL)");
+  }
+
+  if (strict) {
+    for (const [name, url] of [["AML_OFAC_SDN_URL", raw.AML_OFAC_SDN_URL], ["AML_OFAC_ALT_URL", raw.AML_OFAC_ALT_URL], ["AML_UN_LIST_URL", raw.AML_UN_LIST_URL], ["AML_OPENSANCTIONS_PEP_URL", raw.AML_OPENSANCTIONS_PEP_URL]] as const) {
+      if (url !== undefined && !url.startsWith("https:")) problems.push(`${name} doit être en https hors développement`);
+    }
   }
 
   const signingKey = raw.JWT_CUSTOMER_SIGNING_KEY;
@@ -653,6 +680,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       circuitFailureThreshold: raw.CIRCUIT_FAILURE_THRESHOLD,
       circuitOpenSeconds: raw.CIRCUIT_OPEN_SECONDS,
       syncIntervalMs: raw.PAYMENTS_SYNC_INTERVAL_MINUTES * 60_000,
+    },
+    aml: {
+      ofacSdnUrl: raw.AML_OFAC_SDN_URL,
+      ofacAltUrl: raw.AML_OFAC_ALT_URL,
+      unListUrl: raw.AML_UN_LIST_URL,
+      openSanctionsPep: raw.AML_OPENSANCTIONS_PEP_URL === undefined ? undefined : { url: raw.AML_OPENSANCTIONS_PEP_URL, apiKey: raw.AML_OPENSANCTIONS_API_KEY },
+      matchThreshold: raw.AML_MATCH_THRESHOLD,
+      listsMaxAgeHours: raw.AML_LISTS_MAX_AGE_HOURS,
+      listsRefreshMs: raw.AML_LISTS_REFRESH_HOURS * 3_600_000,
     },
     ledger: {
       timestampAuthority:

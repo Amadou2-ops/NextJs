@@ -8,6 +8,8 @@ import type { AppConfig } from "../../config/env.js";
 import type { DatabasePool } from "../../db/pool.js";
 import type { BlindIndexer } from "../../lib/crypto/blindIndex.js";
 import type { FieldEncryptor } from "../../lib/crypto/fieldEncryption.js";
+import type { ComplianceService } from "../aml/compliance.service.js";
+import { createComplianceService } from "../aml/index.js";
 import type { DeviceBindingService } from "../auth/deviceBinding.service.js";
 import type { MfaService } from "../auth/mfa.service.js";
 import { LedgerService } from "../ledger/ledger.service.js";
@@ -60,6 +62,7 @@ export interface PaymentStack {
   readonly recipients: RecipientService;
   readonly breaker: CircuitBreaker;
   readonly ledger: LedgerService;
+  readonly compliance: ComplianceService;
 }
 
 export function createPaymentStack(params: {
@@ -75,6 +78,7 @@ export function createPaymentStack(params: {
   const ledger = new LedgerService();
   const breaker = new CircuitBreaker(pool, { failureThreshold: config.payments.circuitFailureThreshold, openSeconds: config.payments.circuitOpenSeconds });
   const recipients = new RecipientService({ pool, encryptor: params.encryptor, indexer: params.indexer, piiKeyId: config.crypto.piiKeyring.activeKeyId });
+  const compliance = createComplianceService(config, params.encryptor, logger);
   const orchestrator = new PaymentOrchestrator({
     pool,
     logger,
@@ -82,12 +86,13 @@ export function createPaymentStack(params: {
     recipients,
     encryptor: params.encryptor,
     breaker,
+    compliance,
     payinProviders: params.providers.payin,
     payoutProviders: params.providers.payout,
     options: { payoutMaxRoutes: config.payments.payoutMaxRoutes },
   });
   registerPaymentWebhookHandlers(params.inbox, orchestrator, logger);
-  return { orchestrator, recipients, breaker, ledger };
+  return { orchestrator, recipients, breaker, ledger, compliance };
 }
 
 export interface TransfersModule {
@@ -124,6 +129,7 @@ export function createTransfersModule(params: {
     breaker: stack.breaker,
     payinProviders: providers.payin,
     orchestrator: stack.orchestrator,
+    compliance: stack.compliance,
     dispatch: params.dispatch ?? "background",
   });
 

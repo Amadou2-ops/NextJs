@@ -19,7 +19,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 5 | Taux de change (Fixer, Open Exchange Rates), simulation et devis garantis | ✅ |
 | 6 | KYC (Smile ID, Onfido), webhooks signés, niveaux accordés par la base | ✅ |
 | 7 | Bénéficiaires, transferts, routage des paiements (Stripe, Flutterwave, Thunes), remboursements | ✅ |
-| 8 | AML : règles, criblage, dossiers | à venir |
+| 8 | AML : listes OFAC / ONU / PEP versionnées, criblage, 11 règles, mise en revue garantie par la base | ✅ |
 | 9 | API d'administration (RBAC, double validation) | à venir |
 | 10 | Tests de l'API | à venir |
 | 11 | Site web client (Next.js, BFF) | à venir |
@@ -48,7 +48,7 @@ pnpm db:verify                  # chaîne d'empreintes, soldes, balance généra
 ```
 platform/
   db/                      @transfertplus/db — schéma, migrateur, tests
-    migrations/            0001…0021, SQL versionné et immuable une fois appliqué
+    migrations/            0001…0022, SQL versionné et immuable une fois appliqué
     seed/                  données de référence (générées, idempotentes)
     scripts/               générateur des données de référence
     src/                   CLI : migrate | status | verify | seed | test

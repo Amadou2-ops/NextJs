@@ -141,6 +141,11 @@ BEGIN
                           pg_temp.line(pg_temp.id('alice_hold_eur'), 'credit', 10299, 'EUR')),
         'Réservation du transfert', 'customer:alice');
     UPDATE transfers.transfers SET status = 'funded' WHERE id = v_transfer;
+    PERFORM pg_temp.assert_error(format(
+        $q$UPDATE transfers.transfers SET status = 'payout_pending' WHERE id = %L$q$, v_transfer),
+        'TR001', 'paiement sans évaluation AML refusé');
+    INSERT INTO aml.transfer_evaluations (transfer_id, outcome, rule_results, risk_score)
+    VALUES (v_transfer, 'clear', '[]', 10);
     UPDATE transfers.transfers SET status = 'payout_pending' WHERE id = v_transfer;
 
     INSERT INTO payments.payout_corridors (source_country, destination_country, destination_currency, payout_method,

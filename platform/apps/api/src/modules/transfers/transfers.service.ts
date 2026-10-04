@@ -11,6 +11,7 @@ import type { FieldEncryptor } from "../../lib/crypto/fieldEncryption.js";
 import { AppError, ConflictError, ForbiddenError, NotFoundError, ServiceUnavailableError } from "../../lib/errors.js";
 import { Money, parseCurrencyCode } from "../../lib/money.js";
 import type { MoneyJson } from "../../lib/money.js";
+import type { ComplianceService } from "../aml/compliance.service.js";
 import type { MfaService } from "../auth/mfa.service.js";
 import type { LedgerService } from "../ledger/ledger.service.js";
 import type { CircuitBreaker } from "../payments/circuitBreaker.js";
@@ -93,6 +94,7 @@ export class TransferService {
       readonly breaker: CircuitBreaker;
       readonly payinProviders: ReadonlyMap<PaymentProviderName, PayinProvider>;
       readonly orchestrator: PaymentOrchestrator;
+      readonly compliance: ComplianceService;
       /** "inline" : le paiement sortant est déclenché avant la réponse (tests) ; sinon en arrière-plan. */
       readonly dispatch: "inline" | "background";
     },
@@ -265,9 +267,10 @@ export class TransferService {
       reference: { type: "transfer", id: transfer.id },
     });
     await client.query("UPDATE transfers.transfers SET status = 'funded' WHERE id = $1", [transfer.id]);
-    await client.query("UPDATE transfers.transfers SET status = 'payout_pending' WHERE id = $1", [transfer.id]);
     await this.emit(client, transfer.id, "transfers.created", { funding: "wallet_balance" });
     await this.emit(client, transfer.id, "transfers.funded", { funding: "wallet_balance" });
+    // Évaluation AML avant tout paiement : payout_pending ou compliance_review.
+    await this.deps.compliance.evaluateAndRoute(client, transfer.id);
   }
 
   private async selectPayinRoute(

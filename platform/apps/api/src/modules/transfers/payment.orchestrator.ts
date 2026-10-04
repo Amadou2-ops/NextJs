@@ -8,6 +8,7 @@ import type { Actor, Queryable, TransactionClient } from "../../db/transaction.j
 import { fieldContext } from "../../lib/crypto/fieldEncryption.js";
 import type { FieldEncryptor } from "../../lib/crypto/fieldEncryption.js";
 import { Money, parseCurrencyCode } from "../../lib/money.js";
+import type { ComplianceService } from "../aml/compliance.service.js";
 import type { LedgerService, Posting } from "../ledger/ledger.service.js";
 import type { CircuitBreaker } from "../payments/circuitBreaker.js";
 import { PaymentProviderError, statusOf } from "../payments/providers/types.js";
@@ -58,6 +59,7 @@ export class PaymentOrchestrator {
       readonly recipients: RecipientService;
       readonly encryptor: FieldEncryptor;
       readonly breaker: CircuitBreaker;
+      readonly compliance: ComplianceService;
       readonly payinProviders: ReadonlyMap<PaymentProviderName, PayinProvider>;
       readonly payoutProviders: ReadonlyMap<PaymentProviderName, PayoutProvider>;
       readonly options: OrchestratorOptions;
@@ -142,8 +144,9 @@ export class PaymentOrchestrator {
             `transfer:${transfer.id}:funding`,
           ]);
           await this.transition(client, transfer.id, "funded", null);
-          await this.transition(client, transfer.id, "payout_pending", null);
           await this.emit(client, transfer.id, "transfers.funded", { provider: attempt.provider });
+          // Évaluation AML avant tout paiement : payout_pending ou compliance_review.
+          await this.deps.compliance.evaluateAndRoute(client, transfer.id);
           if (status.fee !== null) {
             await this.deps.ledger.post(client, {
               idempotencyKey: `transfer:${transfer.id}:payin_fee:${attempt.id}`,

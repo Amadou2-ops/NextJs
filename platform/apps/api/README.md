@@ -197,6 +197,32 @@ l'API d'administration (phase 9).
   un compte connecté vérifié par bénéficiaire, inadapté aux particuliers ;
   les paiements sortants passent par Flutterwave et Thunes.
 
+## AML (`src/modules/aml`)
+
+- **Listes** (worker `aml-lists`, toutes les `AML_LISTS_REFRESH_HOURS`) :
+  OFAC SDN + noms alternatifs (CSV), liste consolidée ONU (XML), personnes
+  politiquement exposées OpenSanctions (CSV, obligatoire en production).
+  Chaque import crée une version immuable (empreinte SHA-256) et bascule la
+  version courante dans la même transaction ; une liste moins de deux fois
+  plus courte que la précédente est refusée (`aml.list_rejected`).
+- **Criblage** : présélection par trigrammes (`aml.candidate_names`,
+  fonction `SECURITY DEFINER`, aucun accès direct aux listes), puis note
+  Jaro-Winkler par jeton (accents, translittérations, particules et ordre des
+  noms neutralisés) ajustée par l'année de naissance. Seuil
+  `AML_MATCH_THRESHOLD`. Chaque criblage conserve les versions de listes
+  consultées et les meilleurs candidats.
+- **Évaluation** au financement de chaque transfert : expéditeur et
+  bénéficiaire criblés, puis les 11 règles de `aml.rules` (sanctions, PEP,
+  listes indisponibles ou de plus de `AML_LISTS_MAX_AGE_HOURS`, pays à
+  risque, montant unique, vélocité 1 h / 24 h, fractionnement, bénéficiaire
+  partagé, nouvel appareil, aller-retour rapide). Une règle inconnue du code
+  fait échouer l'évaluation, jamais l'inverse.
+- **Base** (migration 0022) : un transfert ne passe en paiement sortant
+  qu'avec une évaluation `clear` ; une alerte bloquante le place en
+  `compliance_review`, d'où seul un humain (alerte close comme fausse
+  alerte) peut le libérer. Client gelé ou sanctionné : refus `AM001`
+  (`COMPLIANCE_BLOCKED`).
+
 ## Commandes
 
 ```bash
