@@ -1,0 +1,7 @@
+# Outils de publication (Fastlane) : versions figées par Gemfile.lock.
+# Installation : bundle install ; voir fastlane/README.md.
+source "https://rubygems.org"
+
+ruby ">= 3.1"
+
+gem "fastlane", "2.240.1"

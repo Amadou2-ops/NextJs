@@ -61,7 +61,9 @@ En production, référencer les images **par empreinte** (`TP_IMAGE_API=…@sha2
      api dist/cli/bootstrapAdmin.js --email … --name "…" --ip-range 203.0.113.0/24
    ```
    Chaque lien d'enrôlement (affiché une seule fois) est remis en main propre.
-8. **Webhooks** à déclarer chez les prestataires : `https://api.…/v1/webhooks/{stripe,flutterwave,thunes,onfido,smile-id}`.
+8. **Prestataires** : ouvrir les comptes (sandbox puis live), déclarer les
+   webhooks `https://api.…/v1/webhooks/{stripe,flutterwave,thunes,onfido,smile-id}`
+   et lancer le contrôle automatique : voir [PRESTATAIRES.md](PRESTATAIRES.md).
 
 ## Mise à jour
 
@@ -81,7 +83,7 @@ En production, référencer les images **par empreinte** (`TP_IMAGE_API=…@sha2
 | Trousseau des données personnelles | Ajouter une clé à `PII_KEYRING`, changer `activeKeyId` ; **ne jamais retirer** une clé tant que des données chiffrées avec elle existent |
 | Cookies site / back-office | Nouvelle clé dans `SESSION_ENCRYPTION_KEY`, ancienne dans `SESSION_ENCRYPTION_KEY_PREVIOUS` le temps des sessions en cours |
 | `BLIND_INDEX_KEY`, `OTP_HMAC_KEY` | Pas de rotation à chaud (recherche exacte et codes en cours) : procédure planifiée avec réindexation |
-| Prestataires | Rotation côté prestataire, mise à jour de `env/api.env`, redémarrage de `api` et `worker` |
+| Prestataires | Rotation côté prestataire, mise à jour de `env/api.env`, redémarrage de `api` et `worker`, puis `checkProviders.js` ([PRESTATAIRES.md](PRESTATAIRES.md)) |
 
 ## Surveillance et incidents
 

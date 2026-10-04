@@ -82,6 +82,10 @@ du dépôt suit le `AGENTS.md` racine).
   jamais de `double` pour de l'argent.
 - Aucun secret en clair hors du stockage sécurisé ; aucun repli logiciel si
   la Secure Enclave, le Keystore ou l'attestation sont indisponibles.
+- Publication : uniquement par le workflow `platform-mobile-release`
+  (`fastlane/Fastfile`, versions figées par `Gemfile.lock`). Aucun certificat,
+  profil, magasin de clés ou mot de passe dans le dépôt ; toute nouvelle
+  variable `--dart-define` est ajoutée à `DART_DEFINES` du Fastfile et au README.
 
 ## Déploiement (`Dockerfile`, `deploy/`)
 
@@ -94,3 +98,6 @@ du dépôt suit le `AGENTS.md` racine).
   `no-new-privileges`, limites) ; un répertoire inscriptible passe par `tmpfs`.
 - Valider : `docker compose -f deploy/compose.production.yaml config` et
   `caddy validate --config deploy/Caddyfile`.
+- Nouveau prestataire ou nouvel événement de webhook traité : l'ajouter au
+  contrôle `apps/api/src/cli/providerChecks.ts` (lecture seule, aucun secret
+  dans le rapport) et à `deploy/PRESTATAIRES.md`.

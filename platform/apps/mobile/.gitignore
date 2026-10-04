@@ -46,3 +46,10 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Publication : identifiants de signature (jamais versionnés) et gems locales
+*.p12
+*.p8
+*.mobileprovision
+/.bundle/
+/vendor/bundle/

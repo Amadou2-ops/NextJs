@@ -26,6 +26,7 @@ PostgreSQL (Supabase) avec registre comptable en partie double.
 | 12 | Back-office Next.js 16 : connexion mot de passe + clé de sécurité, vues RBAC, double validation, registre, audit ; binôme fondateur (0024) | ✅ |
 | 13 | Application mobile Flutter : clé matérielle (Secure Enclave / Keystore), App Attest / Play Integrity, requêtes signées, verrou biométrique, envoi, paiement, KYC | ✅ |
 | 14 | Déploiement : images distroless signées (SBOM, provenance, analyse bloquante), pile Compose durcie derrière Caddy, secrets générés, procédure d'exploitation | ✅ |
+| 15 | Mise en production : contrôle des comptes prestataires en lecture seule (identifiants, webhooks, environnement), publication mobile signée (Google Play, TestFlight), procédure d'ouverture sandbox puis live | ✅ |
 
 ## Démarrage local
 
@@ -59,7 +60,8 @@ platform/
   apps/mobile/             application Flutter (iOS / Android)
   packages/contracts/      contrat OpenAPI unique (types TS + client Dart)
   Dockerfile               images de production (api, migrate, web, admin)
-  deploy/                  pile de production, Caddy, secrets, procédure d'exploitation
+  deploy/                  pile de production, Caddy, secrets, procédure d'exploitation,
+                           ouverture des comptes prestataires (PRESTATAIRES.md)
   docker-compose.yml       environnement local
   .env.example             variables (aucune valeur réelle)
 ```
@@ -69,4 +71,5 @@ Voir [`db/README.md`](db/README.md) pour la conception du registre et
 [`apps/web/README.md`](apps/web/README.md) pour le site client,
 [`apps/admin/README.md`](apps/admin/README.md) pour le back-office,
 [`apps/mobile/README.md`](apps/mobile/README.md) pour l'application mobile,
-[`deploy/README.md`](deploy/README.md) pour le déploiement et l'exploitation.
+[`deploy/README.md`](deploy/README.md) pour le déploiement et l'exploitation,
+[`deploy/PRESTATAIRES.md`](deploy/PRESTATAIRES.md) pour l'ouverture des comptes prestataires.

@@ -15,7 +15,7 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       // Points d'entrée : assemblage des modules (testés séparément) et
       // ressources de processus (signaux, connexions Redis réelles).
-      exclude: ["src/server.ts", "src/worker.ts", "src/cli/**", "src/config/logger.ts", "src/lib/redis.ts", "src/types/**"],
+      exclude: ["src/server.ts", "src/worker.ts", "src/cli/bootstrapAdmin.ts", "src/cli/checkProviders.ts", "src/config/logger.ts", "src/lib/redis.ts", "src/types/**"],
       reporter: ["text-summary", "json-summary", "html"],
       reportsDirectory: "coverage",
       // Seuils bloquants : toute régression de couverture fait échouer la CI.

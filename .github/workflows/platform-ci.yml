@@ -215,6 +215,16 @@ jobs:
         run: flutter test
       - name: Build Android (compile le canal natif Keystore / Play Integrity)
         run: flutter build apk --debug --dart-define=API_BASE_URL=https://api.transfertplus.example
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: platform/apps/mobile
+      - name: Procédures de publication (Fastfile et dépendances figées)
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+          LC_ALL: C.UTF-8
+        run: bundle exec fastlane lanes
 
   mobile-ios:
     name: Application mobile (build iOS)

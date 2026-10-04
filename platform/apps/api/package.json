@@ -51,6 +51,7 @@
     "test:coverage": "vitest run --coverage",
     "dev:worker": "tsx watch src/worker.ts",
     "start:worker": "node dist/worker.js",
-    "admin:bootstrap": "node dist/cli/bootstrapAdmin.js"
+    "admin:bootstrap": "node dist/cli/bootstrapAdmin.js",
+    "providers:check": "node dist/cli/checkProviders.js"
   }
 }

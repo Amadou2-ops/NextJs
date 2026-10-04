@@ -97,6 +97,29 @@ export class PlayIntegrityVerifier implements AttestationVerifier {
     };
   }
 
+  /**
+   * Contrôle d'exploitation : le compte de service obtient un jeton OAuth et
+   * l'API Play Integrity accepte de décoder pour ce paquet. Un jeton
+   * volontairement invalide est soumis : HTTP 400 signifie que l'appel est
+   * autorisé (seul le jeton est refusé), 401/403 que le compte de service
+   * n'est pas lié à l'application dans la Play Console ou que l'API n'est pas
+   * activée sur son projet Google Cloud.
+   */
+  async checkAccess(): Promise<{ readonly authorized: boolean; readonly httpStatus: number }> {
+    const accessToken = await this.accessToken();
+    const response = await this.fetchImpl(
+      `https://playintegrity.googleapis.com/v1/${encodeURIComponent(this.options.packageName)}:decodeIntegrityToken`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ integrity_token: "controle-d-exploitation" }),
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    await response.body?.cancel();
+    return { authorized: response.status === 400, httpStatus: response.status };
+  }
+
   /** Jeton OAuth 2.0 du compte de service (assertion JWT RS256), mis en cache. */
   private async accessToken(): Promise<string> {
     if (this.cachedToken !== undefined && this.cachedToken.expiresAtMs - 60_000 > this.now()) return this.cachedToken.value;
