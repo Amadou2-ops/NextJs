@@ -66,6 +66,12 @@ export const registrationCompleteSchema = z
   })
   .strict();
 
+export const passwordResetStartSchema = z.object({ phone, countryHint: country.optional(), locale }).strict();
+
+export const passwordResetCompleteSchema = z
+  .object({ challengeId: uuid, code: otpCode, phone, countryHint: country.optional(), password, totpCode: otpCode.optional() })
+  .strict();
+
 export const loginStartSchema = z.object({ phone, password, client: clientSchema }).strict();
 
 export const loginCompleteSchema = z.object({ loginChallengeId: uuid, code: otpCode }).strict();

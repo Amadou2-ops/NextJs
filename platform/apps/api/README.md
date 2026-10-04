@@ -45,6 +45,14 @@ cryptographiquement PUIS confronté à sa session en base (révocation immédiat
 | Connexion web ou nouvel appareil | mot de passe → TOTP si activé, sinon code SMS | session niveau 2 |
 | Passkey (web) | WebAuthn avec vérification de l'utilisateur | session niveau 2 |
 | Renouvellement | jeton opaque à usage unique (+ signature d'appareil sur mobile) | rotation ; réutilisation = révocation de la session |
+| Mot de passe oublié | code SMS + TOTP si activé (une carte SIM détournée ne suffit pas) | mot de passe remplacé, verrouillage levé, **toutes** les sessions fermées, avis SMS au titulaire |
+
+Mot de passe oublié (`/v1/auth/password-reset/start|complete`) : réponse
+identique qu'un compte actif corresponde ou non au numéro (aucun SMS sinon,
+et aucune erreur d'envoi visible) ; le code SMS est consommé dès qu'il est
+juste, même si la suite échoue (`TOTP_REQUIRED`), si bien que chaque essai du
+second facteur coûte un nouveau code (5 par 15 min et par numéro) ; échecs
+et réussites sont audités.
 
 Garanties principales :
 

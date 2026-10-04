@@ -18,6 +18,8 @@ import type { FullApplication } from "./support/fullApplication.js";
 const PUBLIC_ROUTES = new Set([
   "post /v1/auth/device-challenges",
   "post /v1/auth/registration/start",
+  "post /v1/auth/password-reset/start",
+  "post /v1/auth/password-reset/complete",
   "post /v1/auth/registration/complete",
   "post /v1/auth/login",
   "post /v1/auth/login/verify",

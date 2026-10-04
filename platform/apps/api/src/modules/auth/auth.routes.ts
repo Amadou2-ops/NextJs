@@ -16,6 +16,8 @@ import {
   loginStartSchema,
   passkeyAuthenticationVerifySchema,
   passkeyRegistrationVerifySchema,
+  passwordResetCompleteSchema,
+  passwordResetStartSchema,
   refreshSchema,
   registrationCompleteSchema,
   registrationStartSchema,
@@ -27,7 +29,8 @@ import type { DeviceBindingService } from "./deviceBinding.service.js";
 /**
  * Routes /v1/auth. Limitations de débit spécifiques :
  *   - par IP sur toutes les routes publiques (bourrage d'identifiants) ;
- *   - par numéro de téléphone sur l'inscription et la connexion (attaque
+ *   - par numéro de téléphone sur l'inscription, la connexion et la
+ *     réinitialisation du mot de passe (attaque
  *     ciblée d'un compte, « SMS pumping »).
  */
 
@@ -76,6 +79,8 @@ export function authRoutes(deps: AuthRouterDependencies): Router {
   router.post("/v1/auth/registration/complete", publicLimit, phoneLimit, validate({ body: registrationCompleteSchema }), handle(c.completeRegistration));
   router.post("/v1/auth/login", publicLimit, phoneLimit, validate({ body: loginStartSchema }), handle(c.startLogin));
   router.post("/v1/auth/login/verify", publicLimit, validate({ body: loginCompleteSchema }), handle(c.completeLogin));
+  router.post("/v1/auth/password-reset/start", publicLimit, phoneLimit, validate({ body: passwordResetStartSchema }), handle(c.startPasswordReset));
+  router.post("/v1/auth/password-reset/complete", publicLimit, phoneLimit, validate({ body: passwordResetCompleteSchema }), handle(c.completePasswordReset));
   router.post("/v1/auth/token/refresh", publicLimit, validate({ body: refreshSchema }), handle(c.refresh));
   router.post("/v1/auth/passkeys/authentication/options", publicLimit, handle(c.passkeyAuthenticationOptions));
   router.post("/v1/auth/passkeys/authentication/verify", publicLimit, validate({ body: passkeyAuthenticationVerifySchema }), handle(c.passkeyAuthenticationVerify));

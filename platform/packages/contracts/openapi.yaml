@@ -177,6 +177,66 @@ paths:
         "409": { $ref: "#/components/responses/Problem" }
         "410": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
+  /auth/password-reset/start:
+    post:
+      tags: [auth]
+      operationId: startPasswordReset
+      summary: Envoie un code de réinitialisation par SMS (réponse identique pour un numéro sans compte actif, aucun SMS envoyé)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [phone]
+              properties:
+                phone: { type: string, example: "+221 77 123 45 67" }
+                countryHint: { $ref: "#/components/schemas/CountryCode" }
+                locale: { type: string, default: fr }
+      responses:
+        "202":
+          description: Demande enregistrée
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationChallenge"
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /auth/password-reset/complete:
+    post:
+      tags: [auth]
+      operationId: completePasswordReset
+      summary: Vérifie le code SMS (et le code TOTP si l'application d'authentification est activée), remplace le mot de passe et ferme toutes les sessions
+      description: |
+        Le code SMS est consommé dès qu'il est juste, même si la suite échoue
+        (TOTP absent ou faux : `401 TOTP_REQUIRED`) ; un nouveau code doit
+        alors être demandé. Le titulaire est prévenu par SMS.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, code, phone, password]
+              properties:
+                challengeId: { type: string, format: uuid }
+                code: { $ref: "#/components/schemas/OtpCode" }
+                phone: { type: string }
+                countryHint: { $ref: "#/components/schemas/CountryCode" }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                totpCode: { $ref: "#/components/schemas/OtpCode" }
+      responses:
+        "204": { description: Mot de passe remplacé, sessions fermées }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
   /auth/login:
     post:
       tags: [auth]
@@ -2438,6 +2498,7 @@ components:
         - INVALID_VERIFICATION_CODE
         - VERIFICATION_EXPIRED
         - ACCOUNT_LOCKED
+        - TOTP_REQUIRED
         - DEVICE_ATTESTATION_FAILED
         - DEVICE_SIGNATURE_INVALID
         - VALIDATION_FAILED

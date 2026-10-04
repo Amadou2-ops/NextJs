@@ -10,6 +10,7 @@ import 'ui/screens/home_shell.dart';
 import 'ui/screens/kyc_screen.dart';
 import 'ui/screens/lock_screen.dart';
 import 'ui/screens/login_screen.dart';
+import 'ui/screens/password_reset_screen.dart';
 import 'ui/screens/payment_screen.dart';
 import 'ui/screens/recipients_screen.dart';
 import 'ui/screens/register_screen.dart';
@@ -19,7 +20,7 @@ import 'ui/screens/transfers_screen.dart';
 import 'ui/screens/wallet_screen.dart';
 import 'ui/screens/welcome_screen.dart';
 
-const Set<String> _publicPaths = {'/bienvenue', '/inscription', '/connexion'};
+const Set<String> _publicPaths = {'/bienvenue', '/inscription', '/connexion', '/mot-de-passe-oublie'};
 final RegExp _uuid = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 
 GoRouter buildRouter(AppServices services) {
@@ -46,6 +47,7 @@ GoRouter buildRouter(AppServices services) {
       GoRoute(path: '/bienvenue', builder: (context, state) => const WelcomeScreen()),
       GoRoute(path: '/inscription', builder: (context, state) => const RegisterScreen()),
       GoRoute(path: '/connexion', builder: (context, state) => const LoginScreen()),
+      GoRoute(path: '/mot-de-passe-oublie', builder: (context, state) => const PasswordResetScreen()),
       GoRoute(path: '/', builder: (context, state) => const HomeShell()),
       GoRoute(path: '/envoyer', builder: (context, state) => const SendScreen()),
       GoRoute(

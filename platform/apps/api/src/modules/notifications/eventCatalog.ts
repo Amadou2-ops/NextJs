@@ -1,7 +1,7 @@
 /**
  * Catalogue des événements de l'outbox : gravité pour le journal
  * d'exploitation et, pour quelques-uns seulement, modèle de notification du
- * client.
+ * client (issues de transferts et d'identité, avis de sécurité).
  *
  * Interdiction de divulgation (LCB-FT) : aucun événement de conformité (mise
  * en revue d'un transfert ou d'une identité, alerte, dossier, déclaration de
@@ -17,7 +17,8 @@ export type NotificationTemplate =
   | "transfer_cancelled"
   | "kyc_approved"
   | "kyc_rejected"
-  | "kyc_resubmission_required";
+  | "kyc_resubmission_required"
+  | "password_changed";
 
 export interface EventDefinition {
   readonly severity: EventSeverity;
@@ -61,6 +62,7 @@ export const EVENT_CATALOG: Readonly<Record<string, EventDefinition>> = {
   "aml.case_closed": INFO,
   "aml.list_updated": INFO,
   "backoffice.approval_requested": INFO,
+  "customers.password_reset": { severity: "info", notify: "password_changed" },
   "customers.suspended": INFO,
   "customers.reactivated": INFO,
 

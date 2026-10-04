@@ -3,17 +3,18 @@ import type { BrowserContext, Page } from "@playwright/test";
 
 import { e2eContext } from "../support/context.js";
 import { enableTotp, registerCustomer } from "../support/customer.js";
-import { addVirtualAuthenticator, collectBrowserErrors, freshTotp, frenchMobileNumber, smsCount, strongPassword } from "../support/helpers.js";
+import { addVirtualAuthenticator, collectBrowserErrors, freshTotp, frenchMobileNumber, smsCount, strongPassword, waitForSmsCode } from "../support/helpers.js";
 
 /**
  * Site client : inscription par SMS, session chiffrée, second facteur TOTP,
- * passkey, reconnexions, protections du BFF. Un même client, du premier
+ * passkey, reconnexions, mot de passe oublié, protections du BFF. Un même client, du premier
  * écran à la connexion sans mot de passe.
  */
 test.describe.configure({ mode: "serial" });
 
 const phone = frenchMobileNumber();
 const password = strongPassword("client");
+const newPassword = strongPassword("client-nouveau");
 let totpSecret = "";
 let context: BrowserContext;
 let page: Page;
@@ -116,6 +117,36 @@ test("connexion sans mot de passe par passkey", async () => {
   await page.getByRole("button", { name: "Se connecter avec une passkey" }).click();
   await page.waitForURL("**/tableau-de-bord");
   await expect(page.getByRole("heading", { name: "Tableau de bord" })).toBeVisible();
+});
+
+test("mot de passe oublié : code SMS et code TOTP, puis connexion avec le nouveau mot de passe", async () => {
+  const { webUrl } = e2eContext();
+  await page.goto(`${webUrl}/connexion`);
+  await page.getByRole("link", { name: "Mot de passe oublié ?" }).click();
+  await page.waitForURL("**/mot-de-passe-oublie");
+  const seen = smsCount(phone);
+  await page.getByLabel("Numéro de téléphone du compte").fill(phone);
+  await page.getByRole("button", { name: "Recevoir un code par SMS" }).click();
+  await page.waitForURL("**/mot-de-passe-oublie/nouveau");
+  await page.getByLabel("Code reçu par SMS").fill(await waitForSmsCode(phone, seen));
+  // Application d'authentification activée : la carte SIM seule ne suffit pas.
+  await page.getByLabel("Code de l'application d'authentification (si vous l'avez activée)").fill(await freshTotp(totpSecret));
+  await page.getByLabel("Nouveau mot de passe (10 caractères au moins)").fill(newPassword);
+  await page.getByLabel("Confirmation du mot de passe").fill(newPassword);
+  await page.getByRole("button", { name: "Changer mon mot de passe" }).click();
+  await page.waitForURL("**/connexion?reinitialise=1");
+  await expect(page.getByText("Votre mot de passe a été modifié. Connectez-vous avec le nouveau.")).toBeVisible();
+
+  await page.getByLabel("Numéro de téléphone").fill(phone);
+  await page.getByLabel("Mot de passe").fill(password);
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await expect(page.getByText("Numéro de téléphone ou mot de passe incorrect.")).toBeVisible();
+  await page.getByLabel("Mot de passe").fill(newPassword);
+  await page.getByRole("button", { name: "Se connecter", exact: true }).click();
+  await page.waitForURL("**/connexion/verification");
+  await page.getByLabel("Code à 6 chiffres").fill(await freshTotp(totpSecret));
+  await page.getByRole("button", { name: "Valider" }).click();
+  await page.waitForURL("**/tableau-de-bord");
 });
 
 test("mutation d'une autre origine refusée par le BFF", async () => {

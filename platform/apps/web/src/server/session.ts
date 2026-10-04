@@ -25,7 +25,7 @@ export const sessionSchema = z.object({
 });
 export type WebSession = z.infer<typeof sessionSchema>;
 
-/** Étape d'authentification en cours (défi SMS / TOTP), 10 minutes au plus. */
+/** Étape d'authentification en cours (défi SMS / TOTP, inscription, réinitialisation), 10 minutes au plus. */
 export const pendingSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("login"),
@@ -42,6 +42,12 @@ export const pendingSchema = z.discriminatedUnion("kind", [
     challengeId: z.uuid(),
     phone: z.string().min(6).max(32),
     countryOfResidence: z.string().regex(/^[A-Z]{2}$/),
+  }),
+  z.object({
+    kind: z.literal("password_reset"),
+    challengeId: z.uuid(),
+    phone: z.string().min(6).max(32),
+    countryHint: z.string().regex(/^[A-Z]{2}$/),
   }),
 ]);
 export type PendingStep = z.infer<typeof pendingSchema>;

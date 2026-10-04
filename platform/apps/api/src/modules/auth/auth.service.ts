@@ -133,6 +133,12 @@ function accountLocked(lockedUntil: Date): AppError {
   });
 }
 
+function totpRequired(): AppError {
+  return new AppError("TOTP_REQUIRED", 401, "Code d'authentification requis", {
+    detail: "Votre compte est protégé par une application d'authentification : saisissez son code, puis demandez un nouveau code SMS.",
+  });
+}
+
 function smsFailure(error: unknown): AppError {
   return new ServiceUnavailableError("L'envoi du SMS a échoué. Réessayez dans quelques instants.", error, 30);
 }
@@ -346,6 +352,104 @@ export class AuthService {
       refreshToken: refresh.token,
       refreshTokenExpiresAt: outcome.session.refreshToken.expiresAt,
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mot de passe oublié
+  //
+  // Preuve de possession du numéro (code SMS) et, si le client l'a activée,
+  // de l'application d'authentification (une carte SIM détournée ne suffit
+  // pas). Réponse identique que le numéro corresponde ou non à un compte
+  // actif. Toutes les sessions sont révoquées ; le client est prévenu par SMS
+  // (outbox, modèle password_changed).
+  // ---------------------------------------------------------------------------
+
+  async startPasswordReset(
+    params: { readonly phone: string; readonly countryHint?: string; readonly locale: string },
+    context: RequestContext,
+  ): Promise<{ readonly challengeId: string; readonly expiresAt: Date }> {
+    const phone = this.normalizePhoneOrThrow(params.phone, params.countryHint);
+    const user = await repository.findUserByPhoneIndex(this.deps.pool, this.deps.indexer.compute("phone", phone.e164));
+    const otp = await withTransaction(this.deps.pool, { actor: { type: "system", id: "auth:password_reset" } }, (tx) =>
+      this.deps.otp.create(tx, { purpose: "password_reset", phoneE164: phone.e164, userId: user?.id ?? null, ipAddress: context.ipAddress }),
+    );
+    if (user?.status === "active") {
+      try {
+        await this.deps.otp.sendCode(phone.e164, otp.code, user.preferred_locale);
+      } catch (error: unknown) {
+        // Pas d'erreur visible : elle révélerait l'existence du compte.
+        this.deps.logger.error({ err: error, requestId: context.requestId }, "envoi du code de réinitialisation en échec");
+      }
+    }
+    return { challengeId: otp.challengeId, expiresAt: otp.expiresAt };
+  }
+
+  async completePasswordReset(
+    params: {
+      readonly challengeId: string;
+      readonly code: string;
+      readonly phone: string;
+      readonly countryHint?: string;
+      readonly password: string;
+      readonly totpCode?: string;
+    },
+    context: RequestContext,
+  ): Promise<void> {
+    const phone = this.normalizePhoneOrThrow(params.phone, params.countryHint);
+    const phoneBidx = this.deps.indexer.compute("phone", phone.e164);
+    await this.deps.passwords.assertAcceptable(params.password, { phoneE164: phone.e164 });
+    const passwordHash = await this.deps.passwords.hash(params.password);
+
+    // Code SMS consommé même en cas d'échec ultérieur (TOTP faux) : chaque
+    // essai du second facteur coûte un nouveau code, limité par numéro.
+    const outcome = await withTransaction(this.deps.pool, { actor: { type: "system", id: "auth:password_reset" }, changeNote: "réinitialisation du mot de passe" }, async (tx) => {
+      const verification = await this.deps.otp.verify(tx, { challengeId: params.challengeId, code: params.code, purpose: "password_reset" });
+      if (!verification.ok) return { kind: "invalid_code" as const, reason: verification.reason };
+      if (!verification.destinationBidx.equals(this.deps.otp.destinationIndex(phone.e164))) return { kind: "invalid_code" as const, reason: "phone_mismatch" };
+      const user = await repository.findUserByPhoneIndex(tx, phoneBidx);
+      if (user?.id === undefined || verification.userId !== user.id) return { kind: "invalid_code" as const, reason: "no_account" };
+      if (user.status !== "active") return { kind: "inactive" as const, status: user.status };
+      const secondFactor = user.mfa_totp_enabled_at === null ? "sms_otp" : "totp";
+      if (secondFactor === "totp" && (params.totpCode === undefined || !(await this.deps.mfa.verifyAndConsumeTotp(tx, user.id, params.totpCode)))) {
+        await repository.recordAudit(tx, {
+          actorType: "system",
+          actorId: null,
+          action: "auth.password_reset_failed",
+          targetType: "user",
+          targetId: user.id,
+          ipAddress: context.ipAddress,
+          userAgent: context.userAgent,
+          requestId: context.requestId,
+          metadata: { reason: params.totpCode === undefined ? "totp_missing" : "totp_invalid" },
+        });
+        return { kind: "totp_required" as const };
+      }
+      await tx.query("UPDATE identity.users SET password_hash = $2, failed_login_count = 0, locked_until = NULL WHERE id = $1", [user.id, passwordHash]);
+      const revokedSessions = await repository.revokeUserSessions(tx, { userId: user.id, reason: "password_reset" });
+      await repository.recordAudit(tx, {
+        actorType: "customer",
+        actorId: user.id,
+        action: "auth.password_reset",
+        targetType: "user",
+        targetId: user.id,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+        requestId: context.requestId,
+        metadata: { secondFactor, revokedSessions },
+      });
+      await tx.query(
+        `INSERT INTO integrations.outbox (aggregate_type, aggregate_id, event_type, payload, dedup_key)
+         VALUES ('user', $1, 'customers.password_reset', $2::jsonb, $3)`,
+        [user.id, JSON.stringify({ user_id: user.id, second_factor: secondFactor, revoked_sessions: revokedSessions }), `password-reset:${params.challengeId}`],
+      );
+      return { kind: "reset" as const };
+    });
+
+    if (outcome.kind === "invalid_code") throw invalidCode(outcome.reason);
+    if (outcome.kind === "inactive") {
+      throw new ForbiddenError("Ce compte est suspendu ou clôturé. Contactez le service client.", { reason: `user_${outcome.status}` });
+    }
+    if (outcome.kind === "totp_required") throw totpRequired();
   }
 
   // ---------------------------------------------------------------------------

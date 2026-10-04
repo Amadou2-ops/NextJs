@@ -28,6 +28,7 @@ describe("catalogue et modèles", () => {
   it("ne notifie au client aucun événement de conformité", () => {
     const notified = Object.entries(EVENT_CATALOG).filter(([, definition]) => definition.notify !== undefined).map(([type]) => type).sort();
     expect(notified).toEqual([
+      "customers.password_reset",
       "kyc.resubmission_required",
       "kyc.verification_approved",
       "kyc.verification_rejected",
@@ -43,7 +44,7 @@ describe("catalogue et modèles", () => {
   });
 
   it("rédige des SMS courts, sans motif ni nom, dans l'alphabet GSM", () => {
-    const templates: NotificationTemplate[] = ["transfer_completed", "transfer_refunded", "transfer_cancelled", "kyc_approved", "kyc_rejected", "kyc_resubmission_required"];
+    const templates: NotificationTemplate[] = ["transfer_completed", "transfer_refunded", "transfer_cancelled", "kyc_approved", "kyc_rejected", "kyc_resubmission_required", "password_changed"];
     for (const template of templates) {
       const body = renderNotification(template, { reference: "TP-ABC123", received: "64 611 F CFA" });
       expect(body.startsWith("TransfertPlus : ")).toBe(true);

@@ -51,6 +51,53 @@ void main() {
     expect(find.widgetWithText(TextFormField, 'Mot de passe'), findsOneWidget);
   });
 
+  testWidgets('mot de passe oublié : code SMS puis nouveau mot de passe, retour à la connexion', (tester) async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      return switch (request.url.path) {
+        '/v1/auth/password-reset/start' => http.Response(jsonEncode({'challengeId': '9b0c4a1e-6f61-4c3b-9d8e-1a2b3c4d5e6f', 'expiresAt': '2026-10-04T12:05:00Z'}), 202, headers: {'content-type': 'application/json'}),
+        '/v1/auth/password-reset/complete' => http.Response('', 204),
+        _ => http.Response('', 404),
+      };
+    });
+    final services = _services(store: MemoryStore(), keys: FakeKeyStore(), authenticator: FakeAuthenticator(), client: client);
+    await tester.pumpWidget(TransfertPlusApp(services: services));
+    await services.session.restore();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Se connecter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mot de passe oublié ?'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Numéro de téléphone du compte'), '+33612345678');
+    await tester.tap(find.text('Recevoir un code par SMS'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(requests.last.body), {'phone': '+33612345678', 'countryHint': 'FR', 'locale': 'fr'});
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Code reçu par SMS'), '123456');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Nouveau mot de passe (10 caractères au moins)'), 'Casamance-2027!');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Confirmation du mot de passe'), 'Casamance-2026!');
+    await tester.tap(find.text('Changer mon mot de passe'));
+    await tester.pumpAndSettle();
+    expect(find.text('Les mots de passe ne correspondent pas'), findsOneWidget);
+    expect(requests, hasLength(1));
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Confirmation du mot de passe'), 'Casamance-2027!');
+    await tester.tap(find.text('Changer mon mot de passe'));
+    await tester.pumpAndSettle();
+    expect(requests.last.url.path, '/v1/auth/password-reset/complete');
+    expect(jsonDecode(requests.last.body), {
+      'challengeId': '9b0c4a1e-6f61-4c3b-9d8e-1a2b3c4d5e6f',
+      'code': '123456',
+      'phone': '+33612345678',
+      'countryHint': 'FR',
+      'password': 'Casamance-2027!',
+    });
+    expect(find.text('Connexion'), findsOneWidget);
+    expect(find.text('Mot de passe modifié. Connectez-vous avec le nouveau.'), findsOneWidget);
+  });
+
   testWidgets('session reprise : rien n\'est affiché avant le déverrouillage biométrique', (tester) async {
     final store = MemoryStore();
     final keys = FakeKeyStore()..key = FakeKeyStore.spki;

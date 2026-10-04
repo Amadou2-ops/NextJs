@@ -10,6 +10,8 @@ import {
   loginStartSchema,
   passkeyAuthenticationVerifySchema,
   passkeyRegistrationVerifySchema,
+  passwordResetCompleteSchema,
+  passwordResetStartSchema,
   refreshSchema,
   registrationCompleteSchema,
   registrationStartSchema,
@@ -83,6 +85,31 @@ export class AuthController {
     const body = validatedBody(req, registrationCompleteSchema);
     const result = await this.auth.completeRegistration(body, contextOf(req));
     res.status(201).json(presentAuthenticated(result));
+  };
+
+  startPasswordReset = async (req: Request, res: Response): Promise<void> => {
+    const body = validatedBody(req, passwordResetStartSchema);
+    const result = await this.auth.startPasswordReset(
+      { phone: body.phone, locale: body.locale, ...(body.countryHint === undefined ? {} : { countryHint: body.countryHint }) },
+      contextOf(req),
+    );
+    res.status(202).json({ challengeId: result.challengeId, expiresAt: result.expiresAt.toISOString() });
+  };
+
+  completePasswordReset = async (req: Request, res: Response): Promise<void> => {
+    const body = validatedBody(req, passwordResetCompleteSchema);
+    await this.auth.completePasswordReset(
+      {
+        challengeId: body.challengeId,
+        code: body.code,
+        phone: body.phone,
+        password: body.password,
+        ...(body.countryHint === undefined ? {} : { countryHint: body.countryHint }),
+        ...(body.totpCode === undefined ? {} : { totpCode: body.totpCode }),
+      },
+      contextOf(req),
+    );
+    res.status(204).end();
   };
 
   startLogin = async (req: Request, res: Response): Promise<void> => {

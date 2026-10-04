@@ -31,6 +31,22 @@ class AuthApi {
     await _session.adopt(AuthenticatedSession.fromJson(asObject(json)));
   }
 
+  /// Mot de passe oublié : réponse identique qu'un compte existe ou non.
+  Future<String> startPasswordReset({required String phone, required String countryHint}) async {
+    final json = asObject(await _api.send(HttpMethod.post, '/v1/auth/password-reset/start', body: {'phone': phone, 'countryHint': countryHint, 'locale': 'fr'}, authenticated: false));
+    return json.string('challengeId');
+  }
+
+  /// Remplace le mot de passe ; toutes les sessions du compte sont fermées.
+  Future<void> completePasswordReset({required String challengeId, required String code, required String phone, required String countryHint, required String password, String? totpCode}) async {
+    await _api.send(
+      HttpMethod.post,
+      '/v1/auth/password-reset/complete',
+      body: {'challengeId': challengeId, 'code': code, 'phone': phone, 'countryHint': countryHint, 'password': password, 'totpCode': ?totpCode},
+      authenticated: false,
+    );
+  }
+
   /// Appareil de confiance : la requête signée tient lieu de second facteur.
   /// Nouvel appareil : attestation puis code SMS ou TOTP.
   Future<LoginOutcome> login({required String phone, required String password}) async {

@@ -485,6 +485,109 @@ describe("passkeys (site web)", () => {
   });
 });
 
+describe("mot de passe oublié", () => {
+  const NEW_PASSWORD = "Saloum-Lagune-2027!";
+
+  async function startReset(phone: string): Promise<request.Response> {
+    const start = await request(app).post("/v1/auth/password-reset/start").send({ phone, locale: "fr" });
+    expect(start.status).toBe(202);
+    return start;
+  }
+
+  it("réinitialise par code SMS, ferme toutes les sessions et prévient le titulaire", async () => {
+    const phone = newSenegalPhone();
+    const registered = await register(phone);
+    expect(registered.status).toBe(201);
+    const start = await startReset(phone);
+
+    // Mot de passe trop faible : refusé avant toute consommation du code.
+    const weak = await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: start.body.challengeId, code: sms.lastCode(phone), phone, password: "court" });
+    expect(weak.status).toBe(400);
+    const wrong = await request(app)
+      .post("/v1/auth/password-reset/complete")
+      .send({ challengeId: start.body.challengeId, code: sms.lastCode(phone) === "000000" ? "111111" : "000000", phone, password: NEW_PASSWORD });
+    expect(wrong.status).toBe(422);
+
+    const reset = await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: start.body.challengeId, code: sms.lastCode(phone), phone, password: NEW_PASSWORD });
+    expect(reset.status).toBe(204);
+    // Code à usage unique.
+    expect((await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: start.body.challengeId, code: sms.lastCode(phone), phone, password: NEW_PASSWORD })).status).toBe(410);
+
+    // Ancienne session révoquée, ancien mot de passe refusé, nouveau accepté.
+    expect((await request(app).get("/v1/auth/sessions").set("Authorization", `Bearer ${registered.body.accessToken}`)).status).toBe(401);
+    expect((await request(app).post("/v1/auth/login").send({ phone, password: PASSWORD, client: { type: "web" } })).status).toBe(401);
+    const login = await request(app).post("/v1/auth/login").send({ phone, password: NEW_PASSWORD, client: { type: "web" } });
+    expect(login.body).toMatchObject({ status: "second_factor_required", method: "sms_otp" });
+
+    const userId = registered.body.userId as string;
+    const audit = await owner.query<{ metadata: { secondFactor: string; revokedSessions: number } }>(
+      "SELECT metadata FROM audit.events WHERE action = 'auth.password_reset' AND target_id = $1",
+      [userId],
+    );
+    expect(audit.rows).toEqual([{ metadata: { secondFactor: "sms_otp", revokedSessions: 1 } }]);
+    const outbox = await owner.query("SELECT 1 FROM integrations.outbox WHERE aggregate_type = 'user' AND aggregate_id = $1 AND event_type = 'customers.password_reset'", [userId]);
+    expect(outbox.rowCount).toBe(1);
+
+    // Code valable présenté avec un autre numéro : refusé (et consommé).
+    const again = await startReset(phone);
+    const otherPhone = await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: again.body.challengeId, code: sms.lastCode(phone), phone: newSenegalPhone(), password: PASSWORD });
+    expect(otherPhone.status).toBe(422);
+  });
+
+  it("répond de même pour un numéro inconnu, sans envoyer de SMS", async () => {
+    const unknown = newSenegalPhone();
+    const before = sms.messages.length;
+    const start = await startReset(unknown);
+    expect(start.body).toEqual({ challengeId: expect.any(String) as unknown, expiresAt: expect.any(String) as unknown });
+    expect(sms.messages.length).toBe(before);
+    const attempt = await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: start.body.challengeId, code: "123456", phone: unknown, password: NEW_PASSWORD });
+    expect(attempt.status).toBe(422);
+    expect((await request(app).post("/v1/auth/password-reset/start").send({ phone: "pas un numéro" })).status).toBe(400);
+  });
+
+  it("exige l'application d'authentification si elle est activée : une carte SIM ne suffit pas", async () => {
+    const phone = newSenegalPhone();
+    const registered = await register(phone);
+    const auth = `Bearer ${registered.body.accessToken}`;
+    const setup = await request(app).post("/v1/auth/mfa/totp/setup").set("Authorization", auth).send({});
+    const secret = base32Decode(setup.body.secret as string);
+    const step = timeStep(Date.now() / 1000);
+    expect((await request(app).post("/v1/auth/mfa/totp/confirm").set("Authorization", auth).send({ code: hotp(secret, step) })).status).toBe(204);
+
+    const first = await startReset(phone);
+    const missing = await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: first.body.challengeId, code: sms.lastCode(phone), phone, password: NEW_PASSWORD });
+    expect(missing.status).toBe(401);
+    expect(missing.body.code).toBe("TOTP_REQUIRED");
+    // Le code SMS est consommé : chaque essai du second facteur en coûte un nouveau.
+    expect((await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: first.body.challengeId, code: sms.lastCode(phone), phone, password: NEW_PASSWORD, totpCode: hotp(secret, step + 1) })).status).toBe(410);
+
+    const second = await startReset(phone);
+    const reset = await request(app)
+      .post("/v1/auth/password-reset/complete")
+      .send({ challengeId: second.body.challengeId, code: sms.lastCode(phone), phone, password: NEW_PASSWORD, totpCode: hotp(secret, step + 1) });
+    expect(reset.status).toBe(204);
+    const failures = await owner.query<{ metadata: { reason: string } }>("SELECT metadata FROM audit.events WHERE action = 'auth.password_reset_failed' AND target_id = $1", [registered.body.userId]);
+    expect(failures.rows).toEqual([{ metadata: { reason: "totp_missing" } }]);
+  });
+
+  it("déverrouille un compte bloqué, mais pas un compte suspendu", async () => {
+    const phone = newSenegalPhone();
+    const registered = await register(phone);
+    const userId = registered.body.userId as string;
+    await owner.query("UPDATE identity.users SET failed_login_count = 9, locked_until = now() + interval '1 hour' WHERE id = $1", [userId]);
+    const start = await startReset(phone);
+    expect((await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: start.body.challengeId, code: sms.lastCode(phone), phone, password: NEW_PASSWORD })).status).toBe(204);
+    const user = await owner.query("SELECT 1 FROM identity.users WHERE id = $1 AND failed_login_count = 0 AND locked_until IS NULL", [userId]);
+    expect(user.rowCount).toBe(1);
+
+    await owner.query("UPDATE identity.users SET status = 'suspended' WHERE id = $1", [userId]);
+    const before = sms.messages.length;
+    const suspended = await startReset(phone);
+    expect(sms.messages.length).toBe(before);
+    expect((await request(app).post("/v1/auth/password-reset/complete").send({ challengeId: suspended.body.challengeId, code: "123456", phone, password: NEW_PASSWORD })).status).toBe(422);
+  });
+});
+
 describe("traçabilité", () => {
   it("chaîne d'audit intacte après tous les parcours", async () => {
     const problems = await owner.query("SELECT * FROM audit.verify_chain()");

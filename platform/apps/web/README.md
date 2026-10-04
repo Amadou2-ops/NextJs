@@ -22,6 +22,7 @@ Site client TransfertPlus en Next.js 16 (App Router), conçu comme un
 
 - `/inscription` → code SMS (`/inscription/confirmation`) → tableau de bord
 - `/connexion` → second facteur SMS/TOTP (`/connexion/verification`) ou clé d'accès (WebAuthn)
+- `/mot-de-passe-oublie` → code SMS, code TOTP si activé et nouveau mot de passe (`/mot-de-passe-oublie/nouveau`) → connexion
 - `/envoyer` : devis en direct, bénéficiaire, transfert (clé d'idempotence `web-<uuid>`), paiement
 - `/transferts`, `/transferts/[id]`, `/transferts/[id]/paiement` (Stripe Elements ou page hébergée)
 - `/beneficiaires`, `/portefeuille/[devise]`, `/verification` (KYC Onfido / Smile ID), `/securite`

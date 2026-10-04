@@ -70,6 +70,8 @@ export function renderNotification(template: NotificationTemplate, facts: { read
       return `${BRAND} : la vérification de votre identité n'a pas abouti. Ouvrez l'application pour en savoir plus.`;
     case "kyc_resubmission_required":
       return `${BRAND} : un nouveau document est nécessaire pour vérifier votre identité. Ouvrez l'application pour le transmettre.`;
+    case "password_changed":
+      return `${BRAND} : votre mot de passe vient d'être modifié et vos sessions fermées. Si ce n'est pas vous, contactez immédiatement notre service client.`;
   }
 }
 
@@ -170,6 +172,14 @@ export class CustomerNotifier {
            FROM kyc.verifications v
            JOIN identity.users u ON u.id = v.user_id
           WHERE v.id = $1`,
+        [event.aggregateId],
+      );
+      const row = result.rows[0];
+      return row === undefined ? null : { recipient: row, body: renderNotification(template, {}) };
+    }
+    if (event.aggregateType === "user") {
+      const result = await this.deps.pool.query<Recipient>(
+        "SELECT id AS user_id, status::text AS user_status, phone_enc FROM identity.users WHERE id = $1",
         [event.aggregateId],
       );
       const row = result.rows[0];

@@ -99,3 +99,37 @@ BEGIN
         $q$UPDATE integrations.customer_notifications SET template = 'kyc_rejected'$q$, 'LG006', 'identité de la notification figée');
 END;
 $$;
+
+-- Avis de réinitialisation du mot de passe (0028) : au seul titulaire du compte.
+DO $$
+DECLARE
+    v_alice uuid := pg_temp.id('alice');
+BEGIN
+    INSERT INTO integrations.outbox (aggregate_type, aggregate_id, event_type, payload, dedup_key) VALUES
+        ('user', v_alice, 'customers.password_reset', '{}', 'test14:password-reset'),
+        ('user', v_alice, 'customers.suspended', '{}', 'test14:suspended');
+    PERFORM set_config('test.alice', v_alice::text, true);
+END;
+$$;
+
+SET LOCAL ROLE app_api;
+
+DO $$
+DECLARE
+    v_alice uuid := current_setting('test.alice')::uuid;
+    v_bob   uuid := current_setting('test.bob')::uuid;
+BEGIN
+    PERFORM pg_temp.assert_error(format(
+        $q$INSERT INTO integrations.customer_notifications (outbox_id, user_id, channel, template)
+           VALUES (%s, %L, 'sms', 'password_changed')$q$, pg_temp.outbox('test14:password-reset'), v_bob),
+        'LG007', 'avis destiné à un autre client');
+    PERFORM pg_temp.assert_error(format(
+        $q$INSERT INTO integrations.customer_notifications (outbox_id, user_id, channel, template)
+           VALUES (%s, %L, 'sms', 'password_changed')$q$, pg_temp.outbox('test14:suspended'), v_alice),
+        'LG007', 'suspension non notifiable par ce modèle');
+    INSERT INTO integrations.customer_notifications (outbox_id, user_id, channel, template)
+    VALUES (pg_temp.outbox('test14:password-reset'), v_alice, 'sms', 'password_changed');
+END;
+$$;
+
+RESET ROLE;

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app_services.dart';
 import '../../data/models.dart';
@@ -97,6 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 16),
                       BusyButton(label: 'Se connecter', busy: _busy, onPressed: _login),
+                      TextButton(onPressed: _busy ? null : () => context.push('/mot-de-passe-oublie'), child: const Text('Mot de passe oublié ?')),
                     ],
                   ),
                 ),
